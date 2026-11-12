@@ -45,6 +45,7 @@ def _prepare(args, cfg):
         cfg,
         synthetic=synthetic,
         subjects=tuple(args.subjects),
+        recording=tuple(args.nights),
         n_synthetic_epochs=120 if args.quick else 300,
         model_path=model_path,
         retrain=args.retrain,
@@ -168,8 +169,9 @@ def main(argv=None):
     def common(sp):
         sp.add_argument("--synthetic", action="store_true", help="force synthetic EEG")
         sp.add_argument("--real", action="store_true", help="require Sleep-EDF (no fallback)")
-        sp.add_argument("--download", action="store_true", help="download Sleep-EDF via MNE first")
+        sp.add_argument("--download", action="store_true", help="download Sleep-EDF first (PhysioNet, or its AWS mirror)")
         sp.add_argument("--subjects", type=int, nargs="+", default=[0, 1, 2, 3])
+        sp.add_argument("--nights", type=int, nargs="+", default=[1], choices=[1, 2], help="Sleep Cassette nights per subject")
         sp.add_argument("--quick", action="store_true", help="small data + short training")
         sp.add_argument("--epochs", type=int, default=None)
         sp.add_argument("--retrain", action="store_true")

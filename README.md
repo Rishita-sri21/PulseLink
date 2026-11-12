@@ -43,8 +43,18 @@ pytest                                # 39 tests, ~10 s
 With real data:
 
 ```bash
-python main.py run --download --retrain   # fetch Sleep-EDF subjects 0-3 (~200 MB) and train on them
-python main.py run --real                 # later runs: use the downloaded files, fail if missing
+python main.py run --download --retrain              # fetch Sleep-EDF subjects 0-3, night 1 (~200 MB) and train
+python main.py run --download --retrain --nights 1 2 # both nights per subject (~390 MB), as in the results below
+python main.py run --real                            # later runs: use the downloaded files, fail if missing
+```
+
+`--download` tries physionet.org first and falls back to PhysioNet's AWS Open
+Data mirror (`physionet-open.s3.amazonaws.com`) when physionet.org is blocked,
+which is common on cloud machines and campus proxies. Every file is checked
+against the dataset's published SHA-256 sums. Training on CPU takes about
+20 s per epoch on 8 nights (60 epochs by default, ~20 min).
+
+```bash
 ```
 
 Other commands:
@@ -83,7 +93,8 @@ then `!python main.py train --download --retrain --epochs 60` (uses the GPU auto
 | `evaluation/comparison.py` | Codec benchmark, packet-loss / bandwidth / outage experiments, plots |
 | `pipeline.py` | Glue: data → model → transmitter → channel → receiver → metrics |
 | `dashboard/app.py` | Streamlit demo |
-| `models/pulselink_ae.pt` | Autoencoder trained on synthetic EEG (retrain on Sleep-EDF for real results) |
+| `models/pulselink_ae.pt` | Autoencoder trained on Sleep-EDF subjects 0-2 (6 nights, 60 epochs); subject 3 is held out |
+| `docs/sample_results_sleep_edf.md` | Output of `python main.py run --real --retrain --nights 1 2` |
 | `docs/sample_results_synthetic.md` | Output of `python main.py run --synthetic` |
 
 ## Design
@@ -199,6 +210,55 @@ energy is reported separately. **These are assumptions for a transparent
 model, not measurements.** Swap in datasheet or measured values for your
 hardware.
 
+## Results on Sleep-EDF
+
+From `python main.py run --real --retrain --nights 1 2`: Sleep Cassette subjects
+0-3, both nights (8154 segments of 30 s, `Fpz-Cz` + `Pz-Oz` at 100 Hz). The
+autoencoder and stager are trained on subjects 0-2; **subject 3 is held out
+entirely** and the first 120 test segments are streamed. Full tables:
+[`docs/sample_results_sleep_edf.md`](docs/sample_results_sleep_edf.md).
+The stager scores 0.892 accuracy (kappa 0.82) on the original test EEG.
+
+![rate-distortion-energy on Sleep-EDF](docs/rate_distortion_sleep_edf.png)
+
+| Method | CR | PRDN % | PSD diff dB | Band-power err | Stage acc | Tx energy mJ/seg | Saving vs raw |
+|---|---|---|---|---|---|---|---|
+| Raw | 1.0 | 0.0 | 0.0 | 0.00 | 0.892 | 5.22 | 0 % |
+| DWT k=0.05 | 26.8 | 55.4 | 10.3 | 0.57 | 0.758 | 0.23 | 96 % |
+| PulseLink k=8, b=3 | 20.6 | 46.4 | 2.1 | 0.18 | 0.817 | 0.74 | 86 % |
+| DWT k=0.1 | 13.7 | 40.4 | 4.8 | 0.36 | 0.825 | 0.42 | 92 % |
+| PulseLink k=8, b=4 | 16.0 | 41.6 | 2.1 | 0.18 | 0.850 | 0.82 | 84 % |
+| DWT k=0.2 | 8.1 | 25.4 | 2.4 | 0.17 | 0.867 | 0.69 | 87 % |
+| PulseLink k=16, b=4 | 8.5 | 29.3 | 1.4 | 0.09 | 0.900 | 1.10 | 79 % |
+| Adaptive (64 kbit/s) | 1.7 | 4.4 | 0.6 | 0.03 | 0.875 | 3.18 | 39 % |
+
+What real EEG changes compared with the synthetic run:
+
+* **Spectra: the learned codec still wins, by less.** At similar ratios
+  PulseLink's PSD error is 2-5x lower than DWT's and band-power error about
+  half. Its sleep-stage accuracy is higher at every matched ratio (0.85 vs
+  0.825 at ~15x, 0.90 vs 0.867 at ~8x).
+* **Waveform PRD: DWT is as good or better up to ~15x.** At ~8x DWT reaches
+  25 % PRDN against 29 % for PulseLink. Real EEG is harder to compress than
+  the synthetic signal: no setting of either codec reaches the 10-15 % PRD
+  targets above ~6x.
+* **Adaptive therefore compresses much less on a good link** (1.7x, 39 % energy
+  saving, against 4.6x and 77 % on synthetic data), because its strict 10 %
+  target leaves only high-rate DWT and raw. On constrained links it behaves as
+  designed: 5.3x and 18 % PRDN at 800 bit/s, where raw overflows its buffer
+  and ends at 73 % PRDN with 0.40 stage accuracy.
+* **Compute dominates PulseLink's energy.** The encoder's ~4.9 M ops cost
+  ~0.48 mJ per segment under the model's assumptions, so at the same size
+  DWT uses about half the transmitter energy.
+* **Packet loss without ARQ** behaves as on synthetic data: every compressed
+  method loses whole segments, and the receiver's reliability flags catch only
+  14-38 % of the damaged DWT/PulseLink segments (adaptive: ~96 %, because it
+  writes its predicted PRD into the header). With 2 ARQ retries no segment is
+  lost up to 10 % loss.
+* **Longer training helps.** Going from 30 to 60 epochs lowered PRDN at full
+  latent width from 34 % to 29 % and raised stage accuracy from 0.867 to
+  0.900; validation loss was still falling at 30 epochs.
+
 ## Results on synthetic data
 
 From `python main.py run --synthetic` with 120 held-out 30 s segments
@@ -241,8 +301,12 @@ What this run shows:
 
 ## Limitations and next steps
 
-* Results above are synthetic; train and evaluate on Sleep-EDF (`--download`).
-  For a rigorous study, split by subject and use more nights.
+* The Sleep-EDF results use 4 subjects with one held out and 120 test
+  segments (one hour). A rigorous study needs more subjects (the Sleep
+  Cassette set has 78) and leave-one-subject-out cross-validation.
+* On real EEG the quality targets (15 % / 10 % / 8 % PRD) are stricter than
+  any lossy mode reaches at useful ratios; a band-power or stage-accuracy
+  target may suit the adaptive controller better than PRD.
 * The energy model is analytical. A BLE prototype (e.g. nRF52) with a power
   analyser would replace the assumptions with measurements.
 * The ladder's thresholds (15 % / 10 % / 8 % PRD) are design choices; sweep

@@ -3,8 +3,10 @@
 Downloaded EEG recordings live here and are git-ignored.
 
 * `python main.py run --download` fetches Sleep-EDF (Sleep Cassette, subjects 0-3,
-  night 1, about 200 MB) into `datasets/sleep-edf/` using
-  `mne.datasets.sleep_physionet.age.fetch_data`.
+  night 1, about 200 MB; add `--nights 1 2` for both nights) into
+  `datasets/sleep-edf/`. It tries physionet.org, then PhysioNet's AWS mirror
+  `https://physionet-open.s3.amazonaws.com/sleep-edfx/1.0.0/`, and checks every
+  file against the published `SHA256SUMS.txt`.
 * You can also copy `SC4xxxE0-PSG.edf` and matching `SC4xxxXX-Hypnogram.edf`
   files from https://physionet.org/content/sleep-edfx/1.0.0/ into
   `datasets/sleep-edf/` by hand; any pair found there is used automatically.

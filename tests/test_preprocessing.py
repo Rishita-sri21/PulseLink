@@ -43,3 +43,53 @@ def test_load_dataset_falls_back_to_synthetic(tmp_path, monkeypatch):
     cfg = PreprocessConfig()
     assert ds["segments"].shape[1:] == (len(cfg.channels), cfg.segment_samples)
     assert len(ds["labels"]) == len(ds["segments"])
+
+
+def test_mirror_fallback_downloads_and_verifies(tmp_path, monkeypatch):
+    import hashlib
+
+    import preprocessing.load_eeg as le
+
+    blobs = {"sleep-cassette/SC4001E0-PSG.edf": b"psg", "sleep-cassette/SC4001EC-Hypnogram.edf": b"hyp"}
+    sums = "".join(f"{hashlib.sha256(b).hexdigest()} {k}\n" for k, b in blobs.items())
+
+    def fake_get(url, timeout=30.0):
+        if url.startswith("https://down"):
+            raise OSError("blocked")
+        rel = url.split("/1.0.0/", 1)[1]
+        return sums.encode() if rel == "SHA256SUMS.txt" else blobs[rel]
+
+    monkeypatch.setattr(le, "_http_get", fake_get)
+    pairs = le._download_from_mirrors((0,), (1,), tmp_path, mirrors=("https://down/1.0.0", "https://up/1.0.0"))
+    assert [(p.name, h.name) for p, h in pairs] == [("SC4001E0-PSG.edf", "SC4001EC-Hypnogram.edf")]
+    assert pairs[0][0].read_bytes() == b"psg"
+
+    blobs["sleep-cassette/SC4001E0-PSG.edf"] = b"tampered"
+    pairs[0][0].unlink()
+    try:
+        le._download_from_mirrors((0,), (1,), tmp_path, mirrors=("https://up/1.0.0",))
+    except OSError as exc:
+        assert "checksum" in str(exc)
+    else:
+        raise AssertionError("checksum mismatch not detected")
+
+
+def test_local_recordings_respect_subjects_and_nights(tmp_path):
+    from preprocessing.load_eeg import find_local_recordings
+
+    for name in ["SC4001E0-PSG.edf", "SC4001EC-Hypnogram.edf", "SC4002E0-PSG.edf", "SC4002EC-Hypnogram.edf",
+                 "SC4011E0-PSG.edf", "SC4011EH-Hypnogram.edf"]:
+        (tmp_path / name).write_bytes(b"")
+    assert len(find_local_recordings(tmp_path)) == 3
+    got = find_local_recordings(tmp_path, subjects=(0,), recording=(2,))
+    assert [(p.name, h.name) for p, h in got] == [("SC4002E0-PSG.edf", "SC4002EC-Hypnogram.edf")]
+
+
+def test_split_keeps_each_subject_on_one_side():
+    from pipeline import split_indices
+
+    subj = np.repeat([0, 0, 1, 1, 2, 2], 20)  # two nights per subject
+    data = {"recording_ids": np.repeat(np.arange(6), 20), "subject_ids": subj}
+    tr, ca, te = split_indices(data)
+    assert set(subj[te]) == {2}
+    assert 2 not in set(subj[tr]) | set(subj[ca])
