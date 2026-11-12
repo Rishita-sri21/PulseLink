@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+# downloaded EEG data (large; fetch with `python main.py run --download`)
+datasets/*
+!datasets/README.md
+# generated outputs
+results/
+models/*.pt
+!models/pulselink_ae.pt
+.streamlit/secrets.toml
