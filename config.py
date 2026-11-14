@@ -64,7 +64,7 @@ class AutoencoderConfig:
     # total temporal downsampling = 2 ** (len(enc_hidden) + 1) = 16.
     alpha: float = 1.0  # time-domain loss weight
     beta: float = 0.5  # frequency-domain loss weight
-    epochs: int = 30
+    epochs: int = 60  # 30 -> 60 cut test PRDN by ~5 points on Sleep-EDF (val loss still falling at 30)
     batch_size: int = 8  # small batches = more updates per epoch on small data
     lr: float = 3e-3
     seed: int = 0

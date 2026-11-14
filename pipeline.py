@@ -53,13 +53,17 @@ class Prepared:
 
 
 def split_indices(data: dict, seed: int = 0):
-    """Recording-wise split when there are >= 3 recordings, else chronological."""
-    rec = data["recording_ids"]
-    n = len(rec)
-    ids = np.unique(rec)
+    """Subject-wise split when there are >= 3 subjects, else chronological.
+
+    The last subject (all of its nights) is held out for testing, so the test
+    set never contains a person the autoencoder or stager was trained on.
+    """
+    groups = data.get("subject_ids", data["recording_ids"])
+    n = len(groups)
+    ids = np.unique(groups)
     if len(ids) >= 3:
-        test = np.flatnonzero(rec == ids[-1])
-        rest = np.flatnonzero(rec != ids[-1])
+        test = np.flatnonzero(groups == ids[-1])
+        rest = np.flatnonzero(groups != ids[-1])
         rng = np.random.default_rng(seed)
         rest = rng.permutation(rest)
         n_cal = max(4, len(rest) // 10)
@@ -72,6 +76,7 @@ def prepare(
     cfg: PulseLinkConfig | None = None,
     synthetic: bool | None = None,
     subjects=(0, 1, 2, 3),
+    recording=(1,),
     n_synthetic_epochs: int = 300,
     model_path: Path | None = DEFAULT_MODEL,
     retrain: bool = False,
@@ -80,7 +85,7 @@ def prepare(
     progress=None,
 ) -> Prepared:
     cfg = cfg or PulseLinkConfig()
-    data = load_dataset(subjects=subjects, cfg=cfg.pre, synthetic=synthetic, download=download, n_synthetic_epochs=n_synthetic_epochs)
+    data = load_dataset(subjects=subjects, recording=recording, cfg=cfg.pre, synthetic=synthetic, download=download, n_synthetic_epochs=n_synthetic_epochs)
     log.info("data: %s segments from %s (synthetic=%s)", data["segments"].shape, data["source"], data["is_synthetic"])
     tr, ca, te = split_indices(data)
     seg = data["segments"]
