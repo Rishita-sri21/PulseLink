@@ -71,3 +71,50 @@ class OutageSchedule:
         starts = np.sort(rng.uniform(0, duration_s, size=n))
         lens = rng.exponential(mean_len_s, size=n)
         return OutageSchedule(list(zip(starts, lens)))
+
+
+class TimeBurstLoss:
+    """Bursty loss in *time* (continuous-time Gilbert-Elliott).
+
+    The link alternates between a good state (no loss) and a bad state
+    (everything lost, e.g. the body blocks the antenna) whose mean duration
+    is ``mean_bad_s``. Packets close together in time share the same fate;
+    packets far apart are nearly independent. This is what makes spacing
+    redundant copies in time worthwhile, independent of how busy the link is.
+    """
+
+    def __init__(self, loss: float, mean_bad_s: float, rng: np.random.Generator):
+        self.loss = float(np.clip(loss, 0.0, 0.99))
+        self.b = 1.0 / max(mean_bad_s, 1e-6)  # bad -> good rate
+        self.a = self.b * self.loss / (1.0 - self.loss) if self.loss > 0 else 0.0  # good -> bad rate
+        self.rng = rng
+        self.bad = rng.random() < self.loss
+        self.t = 0.0
+
+    def lost_at(self, t: float) -> bool:
+        if self.loss <= 0:
+            return False
+        dt = max(0.0, t - self.t)
+        self.t = max(self.t, t)
+        decay = np.exp(-(self.a + self.b) * dt)
+        p_bad = self.loss + (1 - self.loss) * decay if self.bad else self.loss * (1 - decay)
+        self.bad = self.rng.random() < p_bad
+        return self.bad
+
+
+class _PerPacket:
+    def __init__(self, m):
+        self.m = m
+
+    def lost_at(self, t: float) -> bool:
+        return self.m.lost()
+
+
+SLOT_S = 0.025  # one burst "packet slot" in time: burst_length 4 = 100 ms fades
+
+
+def make_time_loss_model(loss_rate: float, burst_length: float, rng: np.random.Generator):
+    """Loss model queried by time: independent, or bursts of ``burst_length`` x 25 ms."""
+    if burst_length <= 1.0:
+        return _PerPacket(BernoulliLoss(loss_rate, rng))
+    return TimeBurstLoss(loss_rate, burst_length * SLOT_S, rng)

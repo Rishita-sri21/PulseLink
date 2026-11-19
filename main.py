@@ -6,7 +6,9 @@ Examples::
     python main.py run --download        # fetch Sleep-EDF subjects 0-3 first
     python main.py train --retrain       # (re)train the autoencoder only
     python main.py stream --loss 0.05 --bandwidth 2000 --method adaptive
-    streamlit run dashboard/app.py       # interactive demo
+    streamlit run dashboard/app.py       # interactive demo (offline pipeline)
+    python main.py demo                  # PulseLink Live: real-time web demo
+    python main.py realtime              # real-time / event-detection experiments
 """
 from __future__ import annotations
 
@@ -162,6 +164,56 @@ def write_summary(out, prep, bench, loss, loss_arq, bw, outage, orig_score, n) -
     return text
 
 
+def _load_model_or_none(path=None):
+    from compression.autoencoder import load_model
+
+    p = Path(path) if path else DEFAULT_MODEL
+    if p.exists():
+        return load_model(p)
+    log.warning("no autoencoder at %s: PulseLink AE policy disabled", p)
+    return None
+
+
+def _load_realtime_models(path=None):
+    """(system model, base model): the task-aware streaming autoencoder if trained, else the base one."""
+    from compression.autoencoder import load_model
+    from compression.train_streaming import STREAM_MODEL
+
+    base = _load_model_or_none(path)
+    if path is None and STREAM_MODEL.exists():
+        return load_model(STREAM_MODEL), base
+    return base, None
+
+
+def cmd_demo(args):
+    import pickle
+
+    from realtime.server import serve
+
+    extra = []
+    for path in args.learned or []:
+        with open(path, "rb") as f:
+            extra.append(pickle.load(f))
+    serve(args.host, args.port, _load_realtime_models(args.model)[0], args.speed, extra, args.edf, args.edf_channels, open_browser=not args.no_browser, profile=args.profile)
+
+
+def cmd_realtime(args):
+    from realtime.experiments import run_all
+
+    model, base = _load_realtime_models(args.model)
+    run_all(
+        out=Path(args.out) / "realtime" if args.out == str(RESULTS_DIR) else Path(args.out),
+        model=model,
+        base_model=base,
+        runs=args.runs,
+        minutes=args.minutes,
+        chbmit=args.chbmit,
+        chb_files=args.chb_files,
+        download=args.download,
+        quick=args.quick,
+    )
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description="PulseLink: energy-aware, frequency-preserving EEG compression")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -191,10 +243,33 @@ def main(argv=None):
     s.add_argument("--retries", type=int, default=0)
     s.add_argument("--outage", type=float, nargs=2, metavar=("START", "DURATION"))
 
+    d = sub.add_parser("demo", help="PulseLink Live: real-time web dashboard")
+    d.add_argument("--host", default="127.0.0.1", help="use 0.0.0.0 to show it on other devices in your network")
+    d.add_argument("--port", type=int, default=8050)
+    d.add_argument("--speed", type=float, default=1.0, help="playback speed (1 = real time)")
+    d.add_argument("--model", default=None)
+    d.add_argument("--edf", default=None, help="any EDF file to stream")
+    d.add_argument("--edf-channels", nargs="+", default=None)
+    d.add_argument("--learned", nargs="+", default=None, help="pickled LearnedDetector(s), e.g. from `main.py realtime --chbmit`")
+    d.add_argument("--profile", default="general", help="use case: general, epilepsy, driver, focus")
+    d.add_argument("--no-browser", action="store_true")
+    d.add_argument("-v", "--verbose", action="store_true")
+
+    r = sub.add_parser("realtime", help="real-time streaming + event detection experiments")
+    r.add_argument("--runs", type=int, default=12, help="random synthetic sessions per setting")
+    r.add_argument("--minutes", type=float, default=10.0, help="length of each synthetic session")
+    r.add_argument("--chbmit", default=None, metavar="PATIENT", help="also evaluate seizure detection on CHB-MIT, e.g. chb01")
+    r.add_argument("--chb-files", type=int, default=4, help="CHB-MIT files with seizures to use")
+    r.add_argument("--download", action="store_true", help="download CHB-MIT files if missing")
+    r.add_argument("--quick", action="store_true")
+    r.add_argument("--model", default=None)
+    r.add_argument("--out", default=str(RESULTS_DIR))
+    r.add_argument("-v", "--verbose", action="store_true")
+
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
     np.set_printoptions(precision=3, suppress=True)
-    {"run": cmd_run, "train": cmd_train, "stream": cmd_stream}[args.cmd](args)
+    {"run": cmd_run, "train": cmd_train, "stream": cmd_stream, "demo": cmd_demo, "realtime": cmd_realtime}[args.cmd](args)
 
 
 if __name__ == "__main__":

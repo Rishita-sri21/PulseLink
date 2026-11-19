@@ -1,0 +1,483 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PulseLink Live</title>
+<style>
+:root{
+  --bg:#0b1020; --panel:#121a2e; --panel2:#18223b; --line:#25304d; --text:#e6ebf5; --muted:#8a96b3;
+  --accent:#34d399; --red:#ef4444; --amber:#f59e0b; --blue:#60a5fa; --purple:#a855f7; --teal:#14b8a6; --grey:#9ca3af;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{display:flex;align-items:center;gap:12px;padding:12px 18px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.logo{font-weight:700;font-size:18px;letter-spacing:.3px}
+.logo span{color:var(--accent)}
+.sub{color:var(--muted);font-size:12px}
+.grow{flex:1}
+select,button,input{font:inherit;color:var(--text)}
+select,button{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:6px 10px;cursor:pointer;max-width:100%}
+button:hover{border-color:#3b4a73}
+button:disabled{opacity:.4;cursor:default}
+button.danger{background:#5b1d1d;border-color:#7f2a2a}
+.dot{width:9px;height:9px;border-radius:50%;background:#555;display:inline-block;margin-right:6px}
+.dot.on{background:var(--accent);box-shadow:0 0 8px var(--accent)}
+main{padding:14px 18px;display:grid;gap:14px;grid-template-columns:minmax(0,2.1fr) minmax(300px,1fr)}
+.full{grid-column:1/-1}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;min-width:0}
+.card h3{margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);font-weight:600;display:flex;align-items:center;gap:8px}
+canvas{width:100%;display:block}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:12px;margin-top:6px}
+.sw{display:inline-block;width:12px;height:3px;border-radius:2px;margin-right:5px;vertical-align:middle}
+.box{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.col{display:flex;flex-direction:column;gap:14px;min-width:0}
+/* race */
+.race{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.lane{border-radius:12px;padding:14px 16px;border:1px solid var(--line);background:var(--panel);min-width:0}
+.lane.pl{border-color:#1f6f54;background:linear-gradient(180deg,#10291f,#121a2e)}
+.lane .who{font-size:12px;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);font-weight:600}
+.lane .big{font-size:34px;font-weight:800;font-variant-numeric:tabular-nums;margin:2px 0}
+.lane .what{font-size:13px;color:var(--muted);min-height:38px}
+.lane .what b{color:var(--text)}
+.steps{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+.step{font-size:12px;padding:3px 8px;border-radius:8px;background:#0e1426;color:var(--muted)}
+.step.ok{background:#1f6f54;color:#fff}
+.step.warn{background:#7c4a03;color:#fff}
+.step.bad{background:#5b1d1d;color:#fff}
+.kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px}
+.kpi .v{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums}
+.kpi .s{color:var(--muted);font-size:12px;margin-top:2px}
+.kpi .s b{color:var(--accent);font-weight:600}
+/* phone */
+.phone{max-height:330px;overflow:auto;display:flex;flex-direction:column;gap:8px}
+.nt{border-left:4px solid var(--muted);background:var(--panel2);border-radius:8px;padding:8px 10px;font-size:13px;display:grid;grid-template-columns:1fr auto;gap:4px 8px;align-items:center}
+.nt .t{color:var(--muted);font-size:11px;grid-column:1/-1}
+.nt .p{font-size:10px;font-weight:700;padding:1px 6px;border-radius:6px;margin-right:6px}
+.nt button{padding:3px 8px;font-size:12px}
+.p0{border-left-color:var(--red)} .p0 .p{background:var(--red)}
+.p1{border-left-color:var(--amber)} .p1 .p{background:var(--amber);color:#111}
+.p4{border-left-color:#475569;opacity:.75} .p4 .p{background:#475569}
+.det{display:grid;grid-template-columns:110px 1fr 58px;gap:8px;align-items:center;margin:6px 0;font-size:13px}
+.bar{height:10px;background:#0e1426;border-radius:5px;position:relative;overflow:hidden}
+.bar i{position:absolute;left:0;top:0;bottom:0;border-radius:5px}
+.bar u{position:absolute;left:0;top:0;bottom:0;border-radius:5px;opacity:.35;text-decoration:none}
+.bar .thr{position:absolute;top:-2px;bottom:-2px;left:50%;width:2px;background:#fff8}
+.pill{font-size:11px;padding:1px 7px;border-radius:9px;background:#0e1426;color:var(--muted);text-align:center}
+.pill.on{color:#fff}
+.controls{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+.ctl label{display:flex;justify-content:space-between;color:var(--muted);font-size:12px;margin:8px 0 3px}
+.ctl label b{color:var(--text);font-weight:600}
+input[type=range]{width:100%;accent-color:var(--accent)}
+.seg{display:flex;flex-wrap:wrap;gap:6px}
+.seg button.sel{background:#1f6f54;border-color:#2a8a6a}
+.btns{display:flex;flex-wrap:wrap;gap:6px}
+.note{color:var(--muted);font-size:12px;margin-top:8px}
+.stat{display:flex;justify-content:space-between;gap:10px;font-size:13px;padding:3px 0;border-bottom:1px dashed var(--line)}
+.stat:last-child{border:none}
+.stat span:first-child{color:var(--muted)}
+#banner{display:none;position:fixed;top:14px;left:50%;transform:translateX(-50%);background:#7f1d1d;border:2px solid var(--red);color:#fff;padding:12px 22px;border-radius:12px;font-weight:700;font-size:18px;z-index:10;box-shadow:0 10px 40px #000a;text-align:center;max-width:calc(100% - 32px)}
+#banner.early{background:#7c4a03;border-color:var(--amber)}
+#banner small{display:block;font-weight:500;font-size:13px;opacity:.9;margin-top:3px}
+#offline{display:none;background:#3f3f46;border:1px solid #71717a;color:#fff;border-radius:8px;padding:2px 8px;font-size:12px}
+@media (max-width:1100px){main{grid-template-columns:1fr}.kpis{grid-template-columns:repeat(3,1fr)}.controls{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:600px){header{padding:10px 16px}main{padding:12px 16px}.race{grid-template-columns:1fr}.kpis{grid-template-columns:repeat(2,1fr)}.controls{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div id="banner"></div>
+<header>
+  <div><div class="logo">Pulse<span>Link</span> Live</div><div class="sub">fastest reliable alert from a wearable EEG, even on a bad link</div></div>
+  <div class="grow"></div>
+  <span class="sub"><span id="conn" class="dot"></span><span id="clock">t = 0 s</span></span>
+  <span id="offline">receiver: monitoring offline</span>
+  <select id="profile" title="Use case"></select>
+  <select id="source" title="EEG source"></select>
+  <select id="speed" title="Playback speed">
+    <option value="1">1× real time</option><option value="2">2×</option><option value="4">4×</option><option value="8">8×</option>
+  </select>
+  <button id="pause">Pause</button>
+  <button id="reset">Restart</button>
+</header>
+
+<main>
+  <section class="full race">
+    <div class="lane pl">
+      <div class="who">With PulseLink: the caregiver's phone knows after</div>
+      <div class="big" id="pl_big">–</div>
+      <div class="what" id="pl_what">Waiting for an event. Try the buttons below, or wait for the tour.</div>
+      <div class="steps" id="pl_steps"></div>
+    </div>
+    <div class="lane">
+      <div class="who">Typical wearable (stream EEG, detect on the phone): knows after</div>
+      <div class="big" id="b_big">–</div>
+      <div class="what" id="b_what">Same EEG, same link, one queue for everything.</div>
+      <div class="steps" id="b_steps"></div>
+    </div>
+  </section>
+
+  <section class="full kpis">
+    <div class="card kpi"><h3>Alerts</h3><div class="v" id="k_al">–</div><div class="s" id="k_al_s">delivered / raised</div></div>
+    <div class="card kpi"><h3>Compression</h3><div class="v" id="k_cr">–</div><div class="s" id="k_cr_s">vs 16-bit raw</div></div>
+    <div class="card kpi"><h3>EEG delay at receiver</h3><div class="v" id="k_lat">–</div><div class="s" id="k_lat_s">–</div></div>
+    <div class="card kpi"><h3>Link</h3><div class="v" id="k_loss">–</div><div class="s" id="k_loss_s">–</div></div>
+    <div class="card kpi"><h3>Radio + compute</h3><div class="v" id="k_pw">–</div><div class="s" id="k_pw_s">–</div></div>
+    <div class="card kpi"><h3>Battery (100 mAh)</h3><div class="v" id="k_bat">–</div><div class="s" id="k_bat_s">–</div></div>
+  </section>
+
+  <div class="col">
+    <div class="card">
+      <h3>EEG: original at the wearable vs what has reached the receiver <span class="grow"></span><span id="modeNow" class="pill">–</span></h3>
+      <canvas id="eeg" height="300"></canvas>
+      <div class="legend">
+        <span><span class="sw" style="background:#cbd5e1"></span>original (wearable)</span>
+        <span><span class="sw" style="background:var(--accent)"></span>received, colour = codec</span>
+        <span><span class="box" style="background:#ef444455"></span>lost frame</span>
+        <span><span class="sw" style="background:var(--amber)"></span>early warning</span>
+        <span><span class="sw" style="background:var(--red)"></span>confirmed alert</span>
+        <span id="truthLegend"></span>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Detector timeline (last 60 s): thick = wearable, dotted = early stage, thin = receiver on compressed data</h3>
+      <canvas id="timeline" height="150"></canvas>
+    </div>
+    <div class="card">
+      <h3>Transmit queue by priority (bytes waiting) <span class="grow"></span><span class="sub" id="qnow"></span></h3>
+      <canvas id="queue" height="110"></canvas>
+      <div class="legend" id="qLegend"></div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="card">
+      <h3>Caregiver's phone (PulseLink notifications) <span class="grow"></span><button id="ackAll" title="Acknowledge every open critical notification">Acknowledge</button></h3>
+      <div class="phone" id="phone"><div class="note">Notifications arrive here: P0 critical (must be acknowledged, escalates after 30 s), P1 warnings, P4 logs.</div></div>
+    </div>
+    <div class="card">
+      <h3>Detectors on the wearable</h3>
+      <div id="dets"></div>
+      <div class="note" id="calib"></div>
+    </div>
+    <div class="card">
+      <h3>Session</h3>
+      <div id="stats"></div>
+    </div>
+  </div>
+
+  <section class="full controls">
+    <div class="card ctl">
+      <h3>Wireless link (both systems)</h3>
+      <label>Packet loss <b id="v_loss">0 %</b></label>
+      <input type="range" id="loss" min="0" max="0.5" step="0.01" value="0">
+      <label>Loss bursts (body blocking) <b id="v_burst">none</b></label>
+      <input type="range" id="burst" min="1" max="10" step="1" value="1">
+      <label>Bandwidth <b id="v_bw">16 kbit/s</b></label>
+      <input type="range" id="bw" min="0" max="6" step="1" value="4">
+    </div>
+    <div class="card ctl">
+      <h3>Disconnect</h3>
+      <div class="btns"><button class="danger" id="cut10">Cut the link for 10 s</button><button class="danger" id="cut30">for 30 s</button></div>
+      <div class="note">PulseLink sends critical alerts over a backup radio if the main link does not acknowledge them within 0.5 s, buzzes locally if nothing is acknowledged within 2 s, and the phone warns when the wearable goes silent.</div>
+    </div>
+    <div class="card ctl">
+      <h3>Compression (PulseLink side)</h3>
+      <div class="seg" id="policy"></div>
+      <div class="note" id="policyNote"></div>
+      <label>Alert copies (spaced 0.1 s, plus ACK) <b id="v_copies">2</b></label>
+      <input type="range" id="copies" min="1" max="5" step="1" value="2">
+    </div>
+    <div class="card ctl">
+      <h3>Trigger an event (synthetic sources)</h3>
+      <div class="btns" id="inject">
+        <button data-k="seizure" class="danger">Seizure</button>
+        <button data-k="drowsy">Drowsiness</button>
+        <button data-k="focus">Focus</button>
+        <button data-k="sleep">Fall asleep</button>
+        <button data-k="artifact">Movement</button>
+        <button data-k="flat">Electrode off</button>
+      </div>
+      <div class="note" id="injectNote">The detectors learn this person's baseline in the first ~15 s.</div>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const BW = [800, 1600, 3200, 8000, 16000, 64000, 250000];
+const CODEC_COLORS = {raw:"#9ca3af", dwt:"#60a5fa", pulselink:"#34d399", hifi:"#fbbf24", mid:"#fb923c"};
+const TRUTH_COLORS = {seizure:"#ef4444", postictal:"#94a3b8", drowsiness:"#f59e0b", attention:"#60a5fa", artifact:"#a855f7"};
+const Q_COLORS = {"0":"#ef4444","1":"#f59e0b","2":"#fbbf24","3":"#60a5fa","4":"#475569"};
+const POLICY_NOTES = {
+  raw: "Every frame uncompressed.",
+  dwt: "Fixed wavelet compression.",
+  pulselink: "Fixed task-aware autoencoder compression.",
+  event: "Event-aware: low rate while nothing happens; around a critical event, the last 10 s and the event itself go out at high fidelity (P2), as fast as the link allows."
+};
+let S = null, frames = [], lastArrival = 0, detInfo = {}, es = null, qhist = [], lastRace = null, seenNotes = new Set();
+const WINDOW_S = 10, HIST_S = 60;
+
+function fmt(v, d=1){ return (v===null||v===undefined||!isFinite(v)) ? "–" : Number(v).toFixed(d); }
+function fmtBps(b){ return b>=1000 ? fmt(b/1000, b>=10000?0:1)+" kbit/s" : fmt(b,0)+" bit/s"; }
+function fmtB(b){ return b>=1000 ? fmt(b/1000,1)+" kB" : fmt(b,0)+" B"; }
+async function post(msg){ const r = await fetch("/api/control",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(msg)}); const s = await r.json(); if(!s.error) applyState(s); return s; }
+
+function applyState(s){
+  S = s; detInfo = {}; s.detectors.forEach(d => detInfo[d.name] = d);
+  $("source").innerHTML = s.sources.map(o => `<option value="${o.id}">${o.title}</option>`).join("");
+  $("source").value = s.source;
+  $("profile").innerHTML = s.profiles.map(o => `<option value="${o.id}" title="${o.description}">${o.title}</option>`).join("");
+  $("profile").value = s.profile;
+  $("speed").value = String(s.speed);
+  $("pause").textContent = s.paused ? "Resume" : "Pause";
+  $("policy").innerHTML = s.policies.map(p => `<button data-p="${p}" class="${p===s.policy?'sel':''}">${{raw:"Raw",dwt:"Wavelet",pulselink:"Autoencoder",event:"Event-aware"}[p]}</button>`).join("");
+  $("policy").querySelectorAll("button").forEach(b => b.onclick = () => post({action:"set", policy:b.dataset.p}));
+  $("policyNote").textContent = POLICY_NOTES[s.policy] || "";
+  $("loss").value = s.channel.loss_rate; $("burst").value = s.channel.burst_length;
+  $("bw").value = Math.max(0, BW.indexOf(s.channel.bandwidth_bps)); $("copies").value = s.alert_copies;
+  labels();
+  $("inject").querySelectorAll("button").forEach(b => b.disabled = !s.can_inject);
+  $("injectNote").textContent = s.can_inject ? "The detectors learn this person's baseline in the first ~15 s." : "Recorded data: events come from the recording's annotations.";
+  $("truthLegend").innerHTML = Object.entries(TRUTH_COLORS).map(([k,c]) => `<span style="margin-right:10px"><span class="box" style="background:${c}33;border:1px solid ${c}"></span>${k}</span>`).join("");
+  $("qLegend").innerHTML = Object.entries(s.classes).map(([k,n]) => `<span><span class="box" style="background:${Q_COLORS[k]}"></span>${n}</span>`).join("") + `<span><span class="sw" style="background:#9ca3af"></span>typical wearable's queue</span>`;
+  $("dets").innerHTML = s.detectors.map(d => `<div class="det" title="${d.description}"><span>${d.title} <span class="pill" style="padding:0 5px">P${d.priority}</span></span><div class="bar"><u id="ebar_${d.name}" style="background:${d.color}"></u><i id="bar_${d.name}" style="background:${d.color}"></i><span class="thr"></span></div><span class="pill" id="pill_${d.name}">–</span></div>`).join("");
+}
+function labels(){
+  $("v_loss").textContent = Math.round($("loss").value*100)+" %";
+  const b = +$("burst").value; $("v_burst").textContent = b <= 1 ? "none" : `${b*25} ms`;
+  $("v_bw").textContent = fmtBps(BW[$("bw").value]);
+  $("v_copies").textContent = $("copies").value;
+}
+["loss","burst","bw","copies"].forEach(id => {
+  $(id).oninput = labels;
+  $(id).onchange = () => post({action:"set", loss_rate:+$("loss").value, burst_length:+$("burst").value, bandwidth_bps:BW[$("bw").value], alert_copies:+$("copies").value});
+});
+$("source").onchange = () => post({action:"source", source:$("source").value});
+$("profile").onchange = () => post({action:"profile", profile:$("profile").value});
+$("speed").onchange = () => post({action:"set", speed:+$("speed").value});
+$("pause").onclick = () => post({action: S && S.paused ? "resume" : "pause"});
+$("reset").onclick = () => post({action:"reset"});
+$("cut10").onclick = () => post({action:"outage", seconds:10});
+$("cut30").onclick = () => post({action:"outage", seconds:30});
+$("ackAll").onclick = () => post({action:"ack"});
+$("inject").querySelectorAll("button").forEach(b => b.onclick = () => post({action:"inject", kind:b.dataset.k}));
+
+function connect(){
+  if (es) es.close();
+  es = new EventSource("/api/stream");
+  es.onopen = () => $("conn").classList.add("on");
+  es.onerror = () => $("conn").classList.remove("on");
+  es.onmessage = ev => {
+    const m = JSON.parse(ev.data);
+    if (m.type === "reset"){ frames = []; qhist = []; seenNotes = new Set(); applyState(m.state); $("phone").innerHTML = ""; return; }
+    m.status = "pending"; m.recon = null; m.receiver = {};
+    frames.push(m);
+    for (const r of m.resolved){ const f = frames.find(x => x.frame === r.frame); if (f){ f.status = r.status; f.recon = r.recon; f.receiver = r.receiver; f.latency_s = r.latency_s; f.prd = r.prd; } }
+    for (const [fid, rec] of Object.entries(m.backfill || {})){ const f = frames.find(x => x.frame === +fid); if (f){ f.recon = rec; f.codec = "hifi"; f.status = "ok"; } }
+    for (const r of m.base_resolved){ const f = frames.find(x => x.frame === r.frame); if (f) f.base = r.receiver; }
+    lastArrival = performance.now();
+    const keep = HIST_S / (S ? S.frame_s : 2) + 30;
+    if (frames.length > keep) frames.splice(0, frames.length - keep);
+    qhist.push({t:m.t, q:m.backlog, b:m.base_backlog}); if (qhist.length > HIST_S / (S ? S.frame_s : 2)) qhist.shift();
+    onFrame(m);
+  };
+}
+
+function since(v){ return v === null || v === undefined ? null : v; }
+function renderRace(r){
+  if (!r || r.onset === null || r.onset === undefined){
+    $("pl_big").textContent = "–"; $("b_big").textContent = "–";
+    $("pl_what").innerHTML = r && r.target ? `Watching for <b>${(detInfo[r.target]||{}).title || r.target}</b> (the critical event of this use case).` : "This use case has no critical event: everything is logged or notified.";
+    $("b_what").textContent = "Same EEG, same link, one queue for everything."; $("pl_steps").innerHTML = ""; $("b_steps").innerHTML = ""; return;
+  }
+  const el = r.t - r.onset, T = r.title.toLowerCase();
+  const first = [r.pl_early, r.pl_confirmed].filter(x => x !== null && x !== undefined);
+  const plFirst = first.length ? Math.min(...first) : null;
+  $("pl_big").textContent = plFirst !== null ? `${fmt(plFirst,1)} s` : `… ${fmt(el,0)} s`;
+  $("pl_big").style.color = plFirst !== null ? "var(--accent)" : "var(--text)";
+  $("pl_what").innerHTML = plFirst === null ? `${r.title} started ${fmt(el,0)} s ago (ground truth). Waiting for the wearable's decision…`
+    : (r.pl_confirmed !== null ? `<b>${r.title} confirmed</b> after ${fmt(r.pl_confirmed,1)} s` + (r.pl_path === "backup" ? " over the <b>backup radio</b> (main link down)" : "") : `<b>Possible ${T}</b>: early warning, confirming…`);
+  const st = [];
+  st.push(`<span class="step ${r.pl_early!==null?'warn':''}">early warning ${r.pl_early!==null?fmt(r.pl_early,1)+' s':'–'}</span>`);
+  st.push(`<span class="step ${r.pl_confirmed!==null?'ok':''}">confirmed ${r.pl_confirmed!==null?fmt(r.pl_confirmed,1)+' s':'–'}</span>`);
+  if (r.pl_local_alarm !== null) st.push(`<span class="step bad">wearable buzzed ${fmt(r.pl_local_alarm,1)} s</span>`);
+  $("pl_steps").innerHTML = st.join("");
+  $("b_big").textContent = r.base !== null ? `${fmt(r.base,1)} s` : `… ${fmt(el,0)} s`;
+  $("b_big").style.color = r.base !== null ? "var(--text)" : "var(--muted)";
+  $("b_what").innerHTML = r.base !== null ? `Phone detected the ${T} from the decoded stream after ${fmt(r.base,1)} s` + (plFirst !== null && r.base > plFirst ? `, <b>${fmt(r.base - plFirst,1)} s later</b> than PulseLink.` : ".")
+    : `Not yet. The phone is ${fmt(r.base_lag_s,1)} s behind the live signal` + (r.base_lag_s > 6 ? " because EEG is stuck in the queue." : ".");
+  $("b_steps").innerHTML = `<span class="step ${r.base!==null?'ok':''}">detected on phone ${r.base!==null?fmt(r.base,1)+' s':'–'}</span>`;
+}
+
+function renderPhone(list){
+  const items = (list||[]).slice().reverse().map(n => {
+    const isNew = !seenNotes.has(n.id); seenNotes.add(n.id);
+    if (isNew && n.priority <= 1 && n.kind !== "online" && performance.now() - lastArrival < 3000) showBanner(n);
+    const since = n.t_event !== null && n.t_event !== undefined ? ` · ${fmt(n.t - n.t_event,1)} s after the wearable raised it` : "";
+    const path = n.path === "backup" ? " · via backup radio" : "";
+    const st = n.priority === 0 ? (n.state === "new" ? `<button onclick="post({action:'ack',id:${n.id}})">Ack</button>` : `<span class="pill ${n.state==='escalated'?'on':''}" style="${n.state==='escalated'?'background:#7f1d1d':''}">${n.state}</span>`) : "";
+    return `<div class="nt p${n.priority}"><div><span class="p">P${n.priority}</span>${n.text}</div><div>${st}</div><div class="t">t = ${fmt(n.t,1)} s${since}${path}</div></div>`;
+  });
+  if (items.length) $("phone").innerHTML = items.join("");
+}
+
+function onFrame(m){
+  const s = m.summary, bs = m.base_summary;
+  $("clock").textContent = `t = ${fmt(m.t,0)} s`;
+  $("offline").style.display = m.offline ? "inline-block" : "none";
+  const evs = m.events.filter(e => e.priority !== null && e.priority <= 1 && e.t_onset_device !== null);
+  const dl = evs.filter(e => e.t_alert_arrival !== null).length;
+  $("k_al").textContent = evs.length ? `${dl} / ${evs.length}` : "–";
+  $("k_al_s").textContent = "P0/P1 alerts delivered / raised (recent)";
+  $("k_cr").textContent = fmt(s.compression_ratio,1)+"×";
+  $("k_cr_s").textContent = `${fmtBps(s.bitrate_bps)} on air (typical: ${fmt(bs.compression_ratio,1)}×)`;
+  $("k_lat").textContent = fmt(s.mean_latency_s,1)+" s";
+  $("k_lat_s").textContent = `queued: ${fmtB(s.backlog_bytes)} · typical: ${fmtB(bs.backlog_bytes)}`;
+  $("k_loss").textContent = fmt(100*s.packet_loss,1)+" %";
+  $("k_loss_s").textContent = `${m.link_up ? "link up" : "LINK DOWN"} · ${s.frames_lost} frames lost`;
+  $("k_pw").textContent = fmt(s.tx_power_mw*1000,0)+" µW";
+  $("k_pw_s").innerHTML = `typical wearable: ${fmt(bs.tx_power_mw*1000,0)} µW · raw: ${fmt(s.raw_tx_power_mw*1000,0)} µW`;
+  $("k_bat").textContent = fmt(s.battery_h/24,1)+" days";
+  $("k_bat_s").textContent = `raw streaming: ${fmt(s.battery_h_raw/24,1)} days (0.5 mW front end)`;
+  const mp = $("modeNow"); mp.textContent = `${m.mode} · P${m.priority}`; mp.style.color = CODEC_COLORS[m.codec];
+  $("qnow").textContent = `PulseLink ${fmtB(Object.values(m.backlog).reduce((a,b)=>a+b,0))} · typical ${fmtB(m.base_backlog)}`;
+
+  let calibrating = false;
+  for (const [name, o] of Object.entries(m.device)){
+    const d = detInfo[name]; if (!d) continue;
+    const bar = $("bar_"+name), ebar = $("ebar_"+name), pill = $("pill_"+name);
+    const e = (m.early||{})[name];
+    ebar.style.width = e && e.score !== null ? (100*Math.max(0, Math.min(1, e.score/(d.threshold*2))))+"%" : "0%";
+    if (o.label){ pill.textContent = o.label; pill.classList.add("on"); pill.style.background = d.color; bar.style.width = "0%"; continue; }
+    if (o.score === null){ calibrating = calibrating || name !== "artifact"; bar.style.width = "0%"; pill.textContent = "learning"; pill.classList.remove("on"); pill.style.background = ""; continue; }
+    bar.style.width = (100*Math.max(0, Math.min(1, o.score/(d.threshold*2))))+"%";
+    const pend = e && e.pending;
+    pill.textContent = o.active ? "ACTIVE" : (pend ? "possible" : fmt(o.score,1));
+    pill.classList.toggle("on", o.active || pend); pill.style.background = o.active ? d.color : (pend ? "#7c4a03" : "");
+  }
+  $("calib").textContent = calibrating ? "Learning this person's baseline…" : "Bars: z-score vs this person's baseline (faint = fast early stage). P = priority class.";
+  renderRace(m.race);
+  renderPhone(m.notifications);
+  const st = [
+    ["Use case", (S && S.profiles.find(x=>x.id===S.profile)||{}).title || "–"],
+    ["Source", (S && S.sources.find(x=>x.id===S.source)||{}).title || "–"],
+    ["Ground truth now", m.truth.length ? m.truth.join(", ") : (m.label || "none")],
+    ["This frame", `${m.bytes} B, ${m.packets} packet(s), class P${m.priority}`],
+    ["Interrupted data packets", s.preempted],
+    ["Stale EEG dropped", s.stale_dropped],
+    ["Energy: radio / backup / compute", `${fmt(s.energy_radio_j*1000,1)} / ${fmt(s.energy_backup_radio_j*1000,0)} / ${fmt(s.energy_compute_j*1000,1)} mJ`],
+  ];
+  $("stats").innerHTML = st.map(([a,b]) => `<div class="stat"><span>${a}</span><span>${b}</span></div>`).join("");
+}
+
+let bannerTimer = null;
+function showBanner(n){
+  const b = $("banner");
+  if (n.kind === "offline"){ b.className = ""; b.innerHTML = `⚠ ${n.text}<small>silence is not "all clear"</small>`; }
+  else if (n.priority === 0){ b.className = ""; b.innerHTML = `⚠ ${n.text.toUpperCase()}<small>${n.t_event!==null?`on the phone ${fmt((n.t-n.t_event)*1000,0)} ms after the wearable decided`:""}${n.path==="backup"?" · via backup radio":""}</small>`; }
+  else if (n.kind === "early"){ b.className = "early"; b.innerHTML = `${n.text}<small>early warning, confirmation follows</small>`; }
+  else return;
+  b.style.display = "block"; clearTimeout(bannerTimer); bannerTimer = setTimeout(() => b.style.display = "none", 5000);
+}
+
+// ---------------- drawing ---------------- //
+function setup(c){
+  const dpr = window.devicePixelRatio || 1, w = c.clientWidth, h = +c.getAttribute("height");
+  if (c.width !== Math.round(w*dpr)){ c.width = Math.round(w*dpr); c.height = Math.round(h*dpr); c.style.height = h+"px"; }
+  const g = c.getContext("2d"); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,w,h); return [g,w,h];
+}
+let scale = 60;
+function drawEEG(){
+  const [g,w,h] = setup($("eeg"));
+  if (!frames.length || !S) { g.fillStyle="#8a96b3"; g.fillText("waiting for data…", 20, 30); return; }
+  const fs = S.fs, fsec = S.frame_s, last = frames[frames.length-1];
+  const prog = Math.min(1, (performance.now()-lastArrival)/1000 * S.speed / fsec);
+  const right = last.t - fsec + prog*fsec, left = right - WINDOW_S;
+  const C = last.orig.length, lane = h / C, x = t => (t-left)/WINDOW_S*w;
+  const vals = []; for (const f of frames) if (f.t > left) for (const ch of f.orig) for (let i = 0; i < ch.length; i += 3) vals.push(Math.abs(ch[i]));
+  vals.sort((a,b) => a-b);
+  const mx = Math.max(20, vals.length ? vals[Math.floor(vals.length*0.99)] * 1.15 : 60);
+  scale += (Math.min(mx, 600) - scale) * 0.08;
+  for (const f of frames){
+    const t0 = f.t - fsec; if (f.t < left || t0 > right) continue;
+    for (const k of f.truth){ g.fillStyle = (TRUTH_COLORS[k]||"#888")+"22"; g.fillRect(x(t0),0,x(f.t)-x(t0)+1,h); }
+    if (f.status === "lost"){ g.fillStyle = "#ef444440"; g.fillRect(x(t0),0,x(f.t)-x(t0)+1,h); }
+  }
+  g.strokeStyle = "#25304d"; g.lineWidth = 1;
+  for (let s = Math.ceil(left); s <= right; s++){ g.beginPath(); g.moveTo(x(s),0); g.lineTo(x(s),h); g.stroke(); }
+  for (let c = 0; c < C; c++){
+    const y0 = lane*(c+0.5), k = lane*0.45/scale;
+    g.fillStyle = "#8a96b3"; g.font = "11px system-ui"; g.fillText((S.channels[c]||"ch"+c) + `  ±${Math.round(scale)} µV`, 8, lane*c+14);
+    g.save(); g.beginPath(); g.rect(0, lane*c, w, lane); g.clip();
+    for (const which of ["orig","recon"]){
+      for (const f of frames){
+        const t0 = f.t - fsec; if (f.t < left || t0 > right) continue;
+        if (which === "recon" && !f.recon) continue;
+        const arr = f[which][c], n = arr.length;
+        g.beginPath();
+        for (let i = 0; i < n; i++){
+          const tt = t0 + i/fs; if (tt > right) break;
+          const px = x(tt), py = y0 - arr[i]*k;
+          i ? g.lineTo(px,py) : g.moveTo(px,py);
+        }
+        g.strokeStyle = which === "orig" ? "#cbd5e1" : (CODEC_COLORS[f.codec]||"#34d399");
+        g.globalAlpha = which === "orig" ? 0.55 : 0.95; g.lineWidth = which === "orig" ? 1.6 : 1.1; g.stroke(); g.globalAlpha = 1;
+      }
+    }
+    g.restore();
+  }
+  // when each receiver learned about the event
+  const r = lastRace;
+  if (r && r.onset !== null && r.onset !== undefined){
+    for (const [v, col, lab] of [[r.pl_early, "#f59e0b", "early warning"], [r.pl_confirmed, "#ef4444", "alert"], [r.base, "#9ca3af", "typical: phone detects"]]){
+      if (v === null || v === undefined) continue;
+      const tx = x(r.onset + v); if (tx < 0 || tx > w) continue;
+      g.strokeStyle = col; g.lineWidth = 2; g.beginPath(); g.moveTo(tx,0); g.lineTo(tx,h); g.stroke();
+      g.fillStyle = col; g.font = "11px system-ui"; g.fillText(lab, tx+4, h-6);
+    }
+    const ox = x(r.onset); if (ox >= 0 && ox <= w){ g.setLineDash([3,3]); g.strokeStyle = "#ffffff88"; g.beginPath(); g.moveTo(ox,0); g.lineTo(ox,h); g.stroke(); g.setLineDash([]); g.fillStyle="#fff"; g.fillText("onset", ox+4, 26); }
+  }
+}
+function drawTimeline(){
+  const [g,w,h] = setup($("timeline"));
+  if (!frames.length || !S) return;
+  const last = frames[frames.length-1], left = last.t - HIST_S, fsec = S.frame_s;
+  const dets = S.detectors.filter(d => d.name !== "sleep"), rowH = h / dets.length, x = t => (t-left)/HIST_S*(w-100)+100;
+  dets.forEach((d,i) => {
+    const y = i*rowH;
+    g.fillStyle = "#8a96b3"; g.font = "12px system-ui"; g.fillText(d.title, 4, y+rowH*0.55);
+    for (const f of frames){
+      const t0 = f.t - fsec; if (f.t < left) continue;
+      const o = (f.device||{})[d.name];
+      if (o){ const a = o.score === null ? 0.05 : Math.max(0.06, Math.min(1, o.score/(d.threshold*1.5))); g.globalAlpha = o.active ? 1 : a*0.55; g.fillStyle = d.color; g.fillRect(x(t0), y+3, x(f.t)-x(t0)-1, rowH*0.45); g.globalAlpha = 1; }
+      const e = (f.early||{})[d.name];
+      if (e && e.pending){ g.fillStyle = "#f59e0b"; for (let xx = x(t0); xx < x(f.t)-1; xx += 4) g.fillRect(xx, y+rowH*0.5, 2, 3); }
+      const r = (f.receiver||{})[d.name];
+      if (f.status === "lost"){ g.fillStyle = "#ef444466"; g.fillRect(x(t0), y+rowH*0.62, x(f.t)-x(t0)-1, rowH*0.18); }
+      else if (r){ g.globalAlpha = r.active ? 1 : 0.15; g.fillStyle = d.color; g.fillRect(x(t0), y+rowH*0.62, x(f.t)-x(t0)-1, rowH*0.18); g.globalAlpha = 1; }
+      if (f.truth.includes(d.name)){ g.fillStyle = "#ffffff"; g.fillRect(x(t0), y+rowH-3, x(f.t)-x(t0), 2); }
+    }
+  });
+  g.fillStyle = "#8a96b3"; g.font = "10px system-ui"; g.fillText("white line = ground truth", w-130, h-4);
+}
+function drawQueue(){
+  const [g,w,h] = setup($("queue"));
+  if (!qhist.length || !S) return;
+  const n = Math.round(HIST_S / S.frame_s), bw = w / n;
+  let mx = 600; for (const q of qhist){ mx = Math.max(mx, q.b, Object.values(q.q).reduce((a,b)=>a+b,0)); }
+  const y = v => h - 12 - Math.log10(1 + v) / Math.log10(1 + mx) * (h - 16);
+  qhist.forEach((q, i) => {
+    let acc = 0;
+    for (const k of ["4","3","2","1","0"]){ const v = q.q[k] || 0; if (!v) continue; const y1 = y(acc), y2 = y(acc + v); g.fillStyle = Q_COLORS[k]; g.fillRect(i*bw+1, y2, bw-2, y1-y2); acc += v; }
+  });
+  g.strokeStyle = "#9ca3af"; g.lineWidth = 2; g.beginPath();
+  qhist.forEach((q, i) => { const px = i*bw + bw/2, py = y(q.b); i ? g.lineTo(px,py) : g.moveTo(px,py); }); g.stroke();
+  g.fillStyle = "#8a96b3"; g.font = "10px system-ui"; g.fillText(`log scale, max ${fmtB(mx)}`, 4, 10);
+}
+function tick(){ drawEEG(); drawTimeline(); drawQueue(); requestAnimationFrame(tick); }
+const _onFrame = onFrame; onFrame = m => { lastRace = m.race; _onFrame(m); };
+
+fetch("/api/state").then(r => r.json()).then(s => { applyState(s); connect(); tick(); });
+</script>
+</body>
+</html>

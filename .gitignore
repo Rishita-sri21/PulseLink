@@ -10,4 +10,8 @@ datasets/*
 results/
 models/*.pt
 !models/pulselink_ae.pt
+!models/pulselink_ae_stream.pt
 .streamlit/secrets.toml
+
+# real-time study bundle (send this back, do not commit)
+pulselink_realtime_results.zip
