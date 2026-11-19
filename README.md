@@ -37,7 +37,8 @@ pip install -r requirements.txt
 
 python main.py run --quick            # whole pipeline + experiments (~1.5 min on a laptop CPU)
 streamlit run dashboard/app.py        # interactive demo
-pytest                                # 39 tests, ~10 s
+python main.py demo                   # PulseLink Live: real-time web demo
+pytest                                # 52 tests, ~20 s
 ```
 
 With real data:
@@ -69,6 +70,86 @@ python main.py stream --method raw --outage 300 120        # 120 s disconnection
 Training on Colab: open a notebook, `!git clone` the repo, `!pip install -r requirements.txt`,
 then `!python main.py train --download --retrain --epochs 60` (uses the GPU automatically).
 
+## PulseLink Live: real-time demo
+
+```bash
+python main.py demo                       # opens http://localhost:8050
+python main.py demo --host 0.0.0.0        # let phones/laptops on the same Wi-Fi open it
+```
+
+![PulseLink Live during a seizure in the demo tour](docs/live_demo.png)
+
+A live dashboard (Python standard library only, no extra installs) that streams
+EEG frame by frame through the whole system:
+
+```
+EEG source ──► wearable: causal filter ─► detectors (on raw signal) ─► policy ─► codec ─┐
+ (synthetic / Sleep-EDF /           │                                                  │
+  CHB-MIT / any EDF)                └─► critical event? ─► 12-byte alert, 3 copies ───┤
+                                                                                       ▼
+                          receiver ◄── lossy, bandwidth-limited link (loss, bursts, outages, ARQ)
+                          decode ─► detectors on the reconstructed signal ─► compare latency
+```
+
+What you can show:
+
+* **Original vs reconstructed EEG** scrolling live, coloured by the codec in use, with lost frames marked.
+* **Pluggable event detectors** with live scores: seizure, drowsiness, focus (engagement index), artifact or
+  electrode off, plus sleep stage and any `LearnedDetector` trained from labels. They learn the wearer's
+  baseline in the first ~15 s.
+* **Alerts**: when a *critical* detector fires, an alert packet skips the data queue (banner shows how many ms it took),
+  the last 10 s are re-sent at high fidelity, and the stream stays high fidelity until 10 s after the event.
+* **Buttons** to trigger a seizure, drowsiness, focus, sleep, a movement artifact or an electrode falling off, and to cut
+  the link for 10 s. **Sliders** for packet loss, burstiness, bandwidth, ARQ and alert redundancy.
+* **KPIs**: compression ratio, bitrate, PRD, packet loss and latency, radio+compute power, energy saving vs raw, and
+  battery life on a 100 mAh cell.
+
+The "Demo tour" source plays every use case in about 4 minutes. Downloaded CHB-MIT files
+(`python main.py realtime --chbmit chb01 --download`) and Sleep-EDF nights appear in the source list
+automatically; `--edf file.edf --edf-channels F7-T7 F8-T8` streams any EDF. Add a learned detector with
+`--learned results/realtime/learned_seizure_chb01.pkl`.
+
+## Real-time study: what to run and send back
+
+```bash
+python run_realtime_study.py              # ~15-30 min; downloads CHB-MIT chb01 (~250 MB) once
+python run_realtime_study.py --quick      # 2-minute smoke test
+python run_realtime_study.py --no-chbmit  # offline, synthetic only
+```
+
+It writes `results/realtime/` and packs it into **`pulselink_realtime_results.zip`**: that zip is what to
+share. Inside:
+
+| File | Question it answers |
+|---|---|
+| `summary.md` | all tables below, readable |
+| `usecase_detection.csv` | per use case / policy / loss: sensitivity, false alarms per hour, detection latency on the wearable and at the receiver |
+| `alert_delivery.csv` | how often an alert never arrives, by loss rate, burstiness, number and spacing of copies |
+| `bandwidth_latency.csv` | when the receiver learns about a seizure vs link capacity and a 30 s outage |
+| `policy_cost.csv` | bitrate, PRD overall and during seizures, transmitter power, energy saving, battery life per policy |
+| `chbmit_<patient>_detection.csv`, `_per_seizure.csv` | the same on real CHB-MIT seizures (rule-based and patient-specific learned detector) |
+| `figures/*.png`, `run.log` | plots, and the log for debugging |
+
+Sample output on synthetic data: [`docs/sample_results_realtime_synthetic.md`](docs/sample_results_realtime_synthetic.md).
+Background reading on real-time EEG wearables, transmission and detection:
+[`docs/realtime_eeg_research.md`](docs/realtime_eeg_research.md).
+
+### Adding a new use case
+
+```python
+from realtime.detectors import Detector, register
+
+@register
+class BlinkDetector(Detector):          # any rule on the shared features
+    name, title, window_s, threshold = "blink", "Eye blink", 2.0, 3.0
+    def baseline_values(self, f):        # tracked per person (median / MAD)
+        return {"delta": np.log(f.band["delta"])}
+    def raw_score(self, f, z):
+        return z["delta"]
+```
+
+or train one from labelled windows: `LearnedDetector(name="drowsy").fit(features, labels)`.
+
 ## Repository layout
 
 | Path | What it does |
@@ -92,7 +173,14 @@ then `!python main.py train --download --retrain --epochs 60` (uses the GPU auto
 | `evaluation/classification.py` | Sleep-stage classifier (band-power features + random forest) |
 | `evaluation/comparison.py` | Codec benchmark, packet-loss / bandwidth / outage experiments, plots |
 | `pipeline.py` | Glue: data → model → transmitter → channel → receiver → metrics |
-| `dashboard/app.py` | Streamlit demo |
+| `dashboard/app.py` | Streamlit demo (offline pipeline) |
+| `realtime/features.py` | Shared per-window features (band powers, line length, rhythmicity, flat line, ...) |
+| `realtime/detectors.py` | Pluggable detectors with personal baselines and hysteresis; `LearnedDetector` for any labelled use case |
+| `realtime/sources.py` | Live synthetic EEG with injectable events, recording replay, CHB-MIT download and loading, any EDF |
+| `realtime/engine.py` | Frame-by-frame wearable → link → receiver engine: event-aware policy, alerts, pre-trigger buffer |
+| `realtime/server.py`, `realtime/static/index.html` | PulseLink Live web dashboard (`python main.py demo`) |
+| `realtime/experiments.py` | Real-time experiments and figures (`python main.py realtime`) |
+| `run_realtime_study.py` | One command that runs the real-time study and zips the results |
 | `models/pulselink_ae.pt` | Autoencoder trained on Sleep-EDF subjects 0-2 (6 nights, 60 epochs); subject 3 is held out |
 | `docs/sample_results_sleep_edf.md` | Output of `python main.py run --real --retrain --nights 1 2` |
 | `docs/sample_results_synthetic.md` | Output of `python main.py run --synthetic` |

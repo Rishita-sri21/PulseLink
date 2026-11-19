@@ -1,0 +1,298 @@
+"""Pluggable real-time EEG event detectors.
+
+A detector turns the shared window :class:`~realtime.features.Features`
+into a score; the base class adds a per-person running baseline and
+hysteresis (``on_frames`` consecutive hits to switch on, ``off_frames``
+misses to switch off) so alerts do not flicker.
+
+Built-in use cases (all registered in :data:`REGISTRY`):
+
+========== ============================================== ==========
+name       what it looks for                              critical
+========== ============================================== ==========
+seizure    rhythmic, high line-length, high-power activity  yes
+drowsiness alpha drop-out with rising theta (vs baseline)  no
+attention  engagement index beta / (alpha + theta) rising  no
+artifact   flat line, saturation, one-sided bursts         no
+sleep      30 s sleep stage from the trained stager        no
+========== ============================================== ==========
+
+Add a new use case by subclassing :class:`Detector` and decorating it with
+``@register``, or train one from labelled windows with
+:class:`LearnedDetector` (works for any binary label: seizure, drowsy,
+motor imagery, ...).
+"""
+from __future__ import annotations
+
+import copy
+from collections import deque
+from dataclasses import dataclass
+
+import numpy as np
+
+from realtime.features import Features
+
+REGISTRY: dict[str, type["Detector"]] = {}
+
+
+def register(cls):
+    REGISTRY[cls.name] = cls
+    return cls
+
+
+@dataclass
+class DetectorOutput:
+    name: str
+    score: float | None  # None while calibrating / skipped
+    active: bool
+    onset: bool = False
+    offset: bool = False
+    label: str | None = None  # categorical output (e.g. sleep stage)
+
+
+class RunningBaseline:
+    """Robust per-person baseline of a scalar feature (median / MAD)."""
+
+    def __init__(self, size: int = 60, min_count: int = 5, floor: float = 0.15):
+        self.values: deque[float] = deque(maxlen=size)
+        self.min_count, self.floor = min_count, floor
+
+    def ready(self) -> bool:
+        return len(self.values) >= self.min_count
+
+    def z(self, v: float) -> float:
+        if not self.ready():
+            return 0.0
+        a = np.asarray(self.values)
+        med = np.median(a)
+        scale = max(1.4826 * np.median(np.abs(a - med)), self.floor)
+        return float((v - med) / scale)
+
+    def add(self, v: float) -> None:
+        self.values.append(float(v))
+
+
+class Detector:
+    name = "detector"
+    title = "Detector"
+    description = ""
+    critical = False  # critical events trigger an alert packet + high-fidelity mode
+    window_s = 4.0
+    hop_s: float | None = None  # None = every frame
+    threshold = 3.0
+    on_frames = 2
+    off_frames = 2
+    suppress_on_artifact = True
+    color = "#888888"
+
+    def __init__(self, **kw):
+        for k, v in kw.items():
+            if not hasattr(self, k):
+                raise TypeError(f"{type(self).__name__} has no parameter {k!r}")
+            setattr(self, k, v)
+        self.reset()
+
+    # -- override these ----------------------------------------------------- #
+    def baseline_values(self, f: Features) -> dict[str, float]:
+        """Scalar features tracked by a running baseline (name -> value)."""
+        return {}
+
+    def raw_score(self, f: Features, z: dict[str, float]) -> float:
+        raise NotImplementedError
+
+    # -- machinery ---------------------------------------------------------- #
+    def reset(self) -> None:
+        self.active = False
+        self._pos = self._neg = 0
+        self._baselines: dict[str, RunningBaseline] = {}
+
+    def calibrating(self) -> bool:
+        return any(not b.ready() for b in self._baselines.values())
+
+    def step(self, f: Features, artifact: bool = False) -> DetectorOutput:
+        vals = self.baseline_values(f)
+        for k in vals:
+            self._baselines.setdefault(k, RunningBaseline())
+        z = {k: self._baselines[k].z(v) for k, v in vals.items()}
+        if vals and self.calibrating():
+            score = None
+        else:
+            score = float(self.raw_score(f, z))
+        hit = score is not None and score >= self.threshold and not (artifact and self.suppress_on_artifact)
+        was = self.active
+        if hit:
+            self._pos, self._neg = self._pos + 1, 0
+            if self._pos >= self.on_frames:
+                self.active = True
+        else:
+            self._neg, self._pos = self._neg + 1, 0
+            if self._neg >= self.off_frames:
+                self.active = False
+        # Only learn the baseline from quiet, clean windows.
+        if not self.active and not hit and not artifact:
+            for k, v in vals.items():
+                self._baselines[k].add(v)
+        return DetectorOutput(self.name, score, self.active, onset=self.active and not was, offset=was and not self.active)
+
+    def clone(self) -> "Detector":
+        d = copy.deepcopy(self)
+        d.reset()
+        return d
+
+    def info(self) -> dict:
+        return {"name": self.name, "title": self.title, "description": self.description, "critical": self.critical, "threshold": self.threshold, "color": self.color, "window_s": self.window_s}
+
+
+@register
+class SeizureDetector(Detector):
+    name = "seizure"
+    title = "Seizure"
+    description = "Rhythmic activity with line length and power far above this person's baseline"
+    critical = True
+    window_s = 4.0
+    threshold = 4.0
+    on_frames = 2
+    off_frames = 3
+    suppress_on_artifact = False
+    color = "#ef4444"
+    min_rhythmicity = 2.5
+
+    def baseline_values(self, f):
+        return {"ll": np.log(f.line_length + 1e-6), "pow": np.log(f.total_power + 1e-6)}
+
+    def raw_score(self, f, z):
+        s = (z["ll"] + 2.0 * z["pow"]) / 3.0  # power weighs double
+        # Movement artifacts are broadband and one-sided; seizures are rhythmic.
+        gate = np.clip((f.rhythmicity - 1.5) / (self.min_rhythmicity - 1.5), 0.0, 1.0)
+        if f.channel_asymmetry > 4.0 or f.flat:
+            gate = 0.0
+        return s * gate
+
+
+@register
+class DrowsinessDetector(Detector):
+    name = "drowsiness"
+    title = "Drowsiness"
+    description = "Alpha drop-out with rising theta (theta / (alpha + beta) above baseline) and no rise in beta"
+    window_s = 4.0
+    threshold = 3.0
+    on_frames = 3
+    off_frames = 3
+    color = "#f59e0b"
+
+    def baseline_values(self, f):
+        return {"ta": np.log((f.band["theta"] + 1e-6) / (f.band["alpha"] + f.band["beta"] + 1e-6)), "beta": np.log(f.band["beta"] + 1e-6)}
+
+    def raw_score(self, f, z):
+        # Rising beta means engagement, not sleepiness: it cancels the score.
+        return z["ta"] - max(0.0, z["beta"])
+
+
+@register
+class AttentionDetector(Detector):
+    name = "attention"
+    title = "Focus"
+    description = "Engagement index beta / (alpha + theta) above baseline (Pope et al., 1995)"
+    window_s = 4.0
+    threshold = 3.0
+    on_frames = 3
+    off_frames = 3
+    color = "#3b82f6"
+
+    def baseline_values(self, f):
+        return {"eng": np.log((f.band["beta"] + 1e-6) / (f.band["alpha"] + f.band["theta"] + 1e-6))}
+
+    def raw_score(self, f, z):
+        return z["eng"]
+
+
+@register
+class ArtifactDetector(Detector):
+    name = "artifact"
+    title = "Artifact / electrode"
+    description = "Flat line, saturation or a burst on one channel only: signal not trustworthy"
+    window_s = 2.0
+    threshold = 1.0
+    on_frames = 1
+    off_frames = 1
+    suppress_on_artifact = False
+    color = "#a855f7"
+    max_uv = 400.0
+    max_asymmetry = 4.0
+
+    def raw_score(self, f, z):
+        return float(f.flat or f.max_abs > self.max_uv or f.channel_asymmetry > self.max_asymmetry)
+
+
+@register
+class SleepStageDetector(Detector):
+    """Wraps the offline sleep stager (needs 30 s windows; outputs a label)."""
+
+    name = "sleep"
+    title = "Sleep stage"
+    description = "Sleep stage every 30 s from the band-power random forest"
+    window_s = 30.0
+    hop_s = 30.0
+    threshold = np.inf
+    suppress_on_artifact = False
+    color = "#14b8a6"
+
+    def __init__(self, stager=None, **kw):
+        self.stager = stager
+        super().__init__(**kw)
+
+    def step_window(self, x: np.ndarray) -> DetectorOutput:
+        from config import SLEEP_STAGES
+
+        if self.stager is None:
+            return DetectorOutput(self.name, None, False)
+        stage = int(self.stager.predict(x[None])[0])
+        return DetectorOutput(self.name, float(stage), False, label=SLEEP_STAGES[stage])
+
+    def raw_score(self, f, z):  # pragma: no cover - uses step_window instead
+        return 0.0
+
+
+class LearnedDetector(Detector):
+    """Binary detector learned from labelled windows (any use case).
+
+    >>> det = LearnedDetector(name="seizure_learned", critical=True)
+    >>> det.fit(features_list, labels)          # labels: 0/1 per window
+    """
+
+    title = "Learned"
+    description = "Logistic regression on the shared feature vector"
+    threshold = 0.5
+    color = "#ec4899"
+
+    def __init__(self, name: str = "learned", title: str | None = None, critical: bool = False, **kw):
+        self.name = name
+        self.title = title or name
+        self.critical = critical
+        self.model = None
+        super().__init__(**kw)
+
+    def fit(self, feats: list[Features], y) -> "LearnedDetector":
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.pipeline import make_pipeline
+        from sklearn.preprocessing import StandardScaler
+
+        X = np.stack([f.vector() for f in feats])
+        self.model = make_pipeline(StandardScaler(), LogisticRegression(class_weight="balanced", max_iter=2000, C=0.5))
+        self.model.fit(X, np.asarray(y).astype(int))
+        return self
+
+    def raw_score(self, f, z):
+        if self.model is None:
+            return 0.0
+        return float(self.model.predict_proba(f.vector()[None])[0, 1])
+
+
+def default_detectors(names=("seizure", "drowsiness", "attention", "artifact"), stager=None) -> list[Detector]:
+    out = []
+    for n in names:
+        if n == "sleep":
+            out.append(SleepStageDetector(stager=stager))
+        else:
+            out.append(REGISTRY[n]())
+    return out

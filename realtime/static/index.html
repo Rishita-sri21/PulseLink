@@ -1,0 +1,396 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PulseLink Live</title>
+<style>
+:root{
+  --bg:#0b1020; --panel:#121a2e; --panel2:#18223b; --line:#25304d; --text:#e6ebf5; --muted:#8a96b3;
+  --accent:#34d399; --red:#ef4444; --amber:#f59e0b; --blue:#60a5fa; --purple:#a855f7; --teal:#14b8a6;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{display:flex;align-items:center;gap:14px;padding:12px 18px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.logo{font-weight:700;font-size:18px;letter-spacing:.3px}
+.logo span{color:var(--accent)}
+.sub{color:var(--muted);font-size:12px}
+.grow{flex:1}
+select,button,input{font:inherit;color:var(--text)}
+select,button{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:6px 10px;cursor:pointer}
+button:hover{border-color:#3b4a73}
+button.primary{background:#1f6f54;border-color:#2a8a6a}
+button.danger{background:#5b1d1d;border-color:#7f2a2a}
+.dot{width:9px;height:9px;border-radius:50%;background:#555;display:inline-block;margin-right:6px}
+.dot.on{background:var(--accent);box-shadow:0 0 8px var(--accent)}
+main{padding:14px 18px;display:grid;gap:14px;grid-template-columns:minmax(0,2.1fr) minmax(300px,1fr)}
+.kpis{grid-column:1/-1;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;min-width:0}
+.card h3{margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);font-weight:600;display:flex;align-items:center;gap:8px}
+.kpi .v{font-size:24px;font-weight:700;font-variant-numeric:tabular-nums}
+.kpi .s{color:var(--muted);font-size:12px;margin-top:2px}
+.kpi .s b{color:var(--accent);font-weight:600}
+canvas{width:100%;display:block}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:12px;margin-top:6px}
+.sw{display:inline-block;width:12px;height:3px;border-radius:2px;margin-right:5px;vertical-align:middle}
+.box{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.col{display:flex;flex-direction:column;gap:14px;min-width:0}
+#banner{display:none;position:fixed;top:14px;left:50%;transform:translateX(-50%);background:#7f1d1d;border:2px solid var(--red);color:#fff;padding:12px 22px;border-radius:12px;font-weight:700;font-size:18px;z-index:10;box-shadow:0 10px 40px #000a;text-align:center}
+#banner small{display:block;font-weight:500;font-size:13px;opacity:.9;margin-top:3px}
+.feed{max-height:260px;overflow:auto;display:flex;flex-direction:column;gap:8px}
+.ev{border-left:3px solid var(--muted);background:var(--panel2);border-radius:6px;padding:7px 10px;font-size:13px}
+.ev .t{color:var(--muted);font-size:11px}
+.ev.crit{border-left-color:var(--red)}
+.det{display:grid;grid-template-columns:96px 1fr 54px;gap:8px;align-items:center;margin:6px 0;font-size:13px}
+.bar{height:10px;background:#0e1426;border-radius:5px;position:relative;overflow:hidden}
+.bar i{position:absolute;left:0;top:0;bottom:0;border-radius:5px}
+.bar .thr{position:absolute;top:-2px;bottom:-2px;width:2px;background:#fff8}
+.pill{font-size:11px;padding:1px 7px;border-radius:9px;background:#0e1426;color:var(--muted);text-align:center}
+.pill.on{color:#fff}
+.controls{grid-column:1/-1;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+.ctl label{display:flex;justify-content:space-between;color:var(--muted);font-size:12px;margin:8px 0 3px}
+.ctl label b{color:var(--text);font-weight:600}
+input[type=range]{width:100%;accent-color:var(--accent)}
+.seg{display:flex;flex-wrap:wrap;gap:6px}
+.seg button.sel{background:#1f6f54;border-color:#2a8a6a}
+.btns{display:flex;flex-wrap:wrap;gap:6px}
+.note{color:var(--muted);font-size:12px;margin-top:8px}
+.stat{display:flex;justify-content:space-between;font-size:13px;padding:3px 0;border-bottom:1px dashed var(--line)}
+.stat:last-child{border:none}
+.stat span:first-child{color:var(--muted)}
+@media (max-width:1100px){main{grid-template-columns:1fr}.kpis{grid-template-columns:repeat(3,1fr)}.controls{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:600px){header{padding:10px 16px}main{padding:12px 16px}.kpis{grid-template-columns:repeat(2,1fr)}.controls{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div id="banner"></div>
+<header>
+  <div><div class="logo">Pulse<span>Link</span> Live</div><div class="sub">wearable EEG → on-device detection → compression → lossy wireless link → receiver</div></div>
+  <div class="grow"></div>
+  <span class="sub"><span id="conn" class="dot"></span><span id="clock">t = 0 s</span></span>
+  <select id="source" title="EEG source"></select>
+  <select id="speed" title="Playback speed">
+    <option value="1">1× real time</option><option value="2">2×</option><option value="4">4×</option><option value="8">8×</option>
+  </select>
+  <button id="pause">Pause</button>
+  <button id="reset">Restart</button>
+</header>
+
+<main>
+  <section class="kpis">
+    <div class="card kpi"><h3>Compression</h3><div class="v" id="k_cr">–</div><div class="s" id="k_cr_s">vs 16-bit raw</div></div>
+    <div class="card kpi"><h3>Bitrate on air</h3><div class="v" id="k_br">–</div><div class="s" id="k_br_s">raw needs –</div></div>
+    <div class="card kpi"><h3>Distortion (PRD)</h3><div class="v" id="k_prd">–</div><div class="s">of delivered frames</div></div>
+    <div class="card kpi"><h3>Link</h3><div class="v" id="k_loss">–</div><div class="s" id="k_lat">latency –</div></div>
+    <div class="card kpi"><h3>Radio + compute power</h3><div class="v" id="k_pw">–</div><div class="s" id="k_pw_s">–</div></div>
+    <div class="card kpi"><h3>Battery (100 mAh)</h3><div class="v" id="k_bat">–</div><div class="s" id="k_bat_s">–</div></div>
+  </section>
+
+  <div class="col">
+    <div class="card">
+      <h3>EEG: original at the wearable vs reconstructed at the receiver <span class="grow"></span><span id="modeNow" class="pill">–</span></h3>
+      <canvas id="eeg" height="330"></canvas>
+      <div class="legend">
+        <span><span class="sw" style="background:#cbd5e1"></span>original (wearable)</span>
+        <span><span class="sw" style="background:var(--accent)"></span>reconstructed (receiver), colour = codec</span>
+        <span><span class="box" style="background:#ef444455"></span>lost frame</span>
+        <span id="truthLegend"></span>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Detector timeline (last 60 s): top = wearable, thin = receiver on compressed data</h3>
+      <canvas id="timeline" height="150"></canvas>
+    </div>
+    <div class="card">
+      <h3>Bytes sent per frame (log scale)</h3>
+      <canvas id="bytes" height="110"></canvas>
+      <div class="legend" id="codecLegend"></div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="card">
+      <h3>Alerts and events</h3>
+      <div class="feed" id="feed"><div class="note">Events detected on the wearable appear here. Critical ones (seizure) send an alert packet straight away.</div></div>
+    </div>
+    <div class="card">
+      <h3>Detectors (live score vs threshold)</h3>
+      <div id="dets"></div>
+      <div class="note" id="calib"></div>
+    </div>
+    <div class="card">
+      <h3>Session</h3>
+      <div id="stats"></div>
+    </div>
+  </div>
+
+  <section class="controls">
+    <div class="card ctl">
+      <h3>Transmission policy</h3>
+      <div class="seg" id="policy"></div>
+      <div class="note" id="policyNote"></div>
+      <label>Redundant alert copies <b id="v_copies">3</b></label>
+      <input type="range" id="copies" min="1" max="5" step="1" value="3">
+    </div>
+    <div class="card ctl">
+      <h3>Wireless link</h3>
+      <label>Packet loss <b id="v_loss">0 %</b></label>
+      <input type="range" id="loss" min="0" max="0.4" step="0.01" value="0">
+      <label>Loss burst length (packets) <b id="v_burst">1</b></label>
+      <input type="range" id="burst" min="1" max="10" step="0.5" value="1">
+    </div>
+    <div class="card ctl">
+      <h3>Capacity</h3>
+      <label>Bandwidth <b id="v_bw">16 kbit/s</b></label>
+      <input type="range" id="bw" min="0" max="6" step="1" value="4">
+      <label>ARQ retransmissions <b id="v_arq">0</b></label>
+      <input type="range" id="arq" min="0" max="4" step="1" value="0">
+      <div class="btns" style="margin-top:10px"><button class="danger" id="cut">Cut the link for 10 s</button></div>
+    </div>
+    <div class="card ctl">
+      <h3>Trigger an event (synthetic sources)</h3>
+      <div class="btns" id="inject">
+        <button data-k="seizure" class="danger">Seizure</button>
+        <button data-k="drowsy">Drowsiness</button>
+        <button data-k="focus">Focus</button>
+        <button data-k="sleep">Fall asleep</button>
+        <button data-k="artifact">Movement</button>
+        <button data-k="flat">Electrode off</button>
+      </div>
+      <div class="note" id="injectNote">The detectors learn this person's baseline in the first ~15 s.</div>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const BW = [800, 1600, 3200, 8000, 16000, 64000, 250000];
+const CODEC_COLORS = {raw:"#9ca3af", dwt:"#60a5fa", pulselink:"#34d399", hifi:"#fbbf24", mid:"#fb923c"};
+const CODEC_NAMES = {raw:"raw 16-bit", dwt:"wavelet (DWT)", pulselink:"PulseLink autoencoder", hifi:"high fidelity (event)", mid:"medium fidelity (event, slow link)"};
+const TRUTH_COLORS = {seizure:"#ef4444", postictal:"#94a3b8", drowsiness:"#f59e0b", attention:"#60a5fa", artifact:"#a855f7"};
+const POLICY_NOTES = {
+  raw: "Send every sample uncompressed. Best fidelity, most energy, chokes on slow links.",
+  dwt: "Fixed wavelet compression for every frame.",
+  pulselink: "Fixed autoencoder compression for every frame.",
+  event: "Event-aware: low rate while nothing happens; on a critical event send an alert packet at once, re-send the last 10 s at high fidelity and stay high fidelity until 10 s after it ends."
+};
+let S = null, frames = [], lastArrival = 0, detInfo = {}, es = null;
+const WINDOW_S = 10, HIST_S = 60;
+
+function fmt(v, d=1){ return (v===null||v===undefined||!isFinite(v)) ? "–" : Number(v).toFixed(d); }
+function fmtBps(b){ return b>=1000 ? fmt(b/1000, b>=10000?0:1)+" kbit/s" : fmt(b,0)+" bit/s"; }
+async function post(msg){ const r = await fetch("/api/control",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(msg)}); const s = await r.json(); if(!s.error) applyState(s); return s; }
+
+function applyState(s){
+  S = s; detInfo = {}; s.detectors.forEach(d => detInfo[d.name] = d);
+  $("source").innerHTML = s.sources.map(o => `<option value="${o.id}">${o.title}</option>`).join("");
+  $("source").value = s.source;
+  $("speed").value = String(s.speed);
+  $("pause").textContent = s.paused ? "Resume" : "Pause";
+  $("policy").innerHTML = s.policies.map(p => `<button data-p="${p}" class="${p===s.policy?'sel':''}">${{raw:"Raw",dwt:"Wavelet",pulselink:"PulseLink AE",event:"Event-aware"}[p]}</button>`).join("");
+  $("policy").querySelectorAll("button").forEach(b => b.onclick = () => post({action:"set", policy:b.dataset.p}));
+  $("policyNote").textContent = POLICY_NOTES[s.policy] || "";
+  $("loss").value = s.channel.loss_rate; $("burst").value = s.channel.burst_length; $("arq").value = s.channel.max_retries;
+  $("bw").value = Math.max(0, BW.indexOf(s.channel.bandwidth_bps)); $("copies").value = s.alert_copies;
+  labels();
+  $("inject").querySelectorAll("button").forEach(b => b.disabled = !s.can_inject);
+  $("injectNote").textContent = s.can_inject ? "The detectors learn this person's baseline in the first ~15 s." : "Recorded data: events come from the recording's annotations.";
+  $("truthLegend").innerHTML = Object.entries(TRUTH_COLORS).map(([k,c]) => `<span style="margin-right:10px"><span class="box" style="background:${c}33;border:1px solid ${c}"></span>${k} (ground truth)</span>`).join("");
+  $("codecLegend").innerHTML = Object.entries(CODEC_COLORS).map(([k,c]) => `<span><span class="box" style="background:${c}"></span>${CODEC_NAMES[k]}</span>`).join("");
+  $("dets").innerHTML = s.detectors.map(d => `<div class="det" title="${d.description}"><span>${d.title}${d.critical?' <span style="color:var(--red)">●</span>':''}</span><div class="bar"><i id="bar_${d.name}" style="background:${d.color}"></i><span class="thr"></span></div><span class="pill" id="pill_${d.name}">–</span></div>`).join("");
+}
+function labels(){
+  $("v_loss").textContent = Math.round($("loss").value*100)+" %";
+  $("v_burst").textContent = $("burst").value;
+  $("v_bw").textContent = fmtBps(BW[$("bw").value]);
+  $("v_arq").textContent = $("arq").value;
+  $("v_copies").textContent = $("copies").value;
+}
+["loss","burst","bw","arq","copies"].forEach(id => {
+  $(id).oninput = labels;
+  $(id).onchange = () => post({action:"set", loss_rate:+$("loss").value, burst_length:+$("burst").value, bandwidth_bps:BW[$("bw").value], max_retries:+$("arq").value, alert_copies:+$("copies").value});
+});
+$("source").onchange = () => post({action:"source", source:$("source").value});
+$("speed").onchange = () => post({action:"set", speed:+$("speed").value});
+$("pause").onclick = () => post({action: S && S.paused ? "resume" : "pause"});
+$("reset").onclick = () => post({action:"reset"});
+$("cut").onclick = () => post({action:"outage", seconds:10});
+$("inject").querySelectorAll("button").forEach(b => b.onclick = () => post({action:"inject", kind:b.dataset.k}));
+
+function connect(){
+  if (es) es.close();
+  es = new EventSource("/api/stream");
+  es.onopen = () => $("conn").classList.add("on");
+  es.onerror = () => $("conn").classList.remove("on");
+  es.onmessage = ev => {
+    const m = JSON.parse(ev.data);
+    if (m.type === "reset"){ frames = []; applyState(m.state); $("feed").innerHTML = ""; return; }
+    for (const [fid, rec] of Object.entries(m.backfill || {})){
+      const f = frames.find(x => x.frame === +fid); if (f){ f.recon = rec; f.codec = "hifi"; f.status = "ok"; f.backfilled = true; }
+    }
+    frames.push(m); lastArrival = performance.now();
+    const keep = HIST_S / (S ? S.frame_s : 2) + 4;
+    if (frames.length > keep) frames.splice(0, frames.length - keep);
+    onFrame(m);
+  };
+}
+
+function onFrame(m){
+  const s = m.summary;
+  $("clock").textContent = `t = ${fmt(m.t,0)} s`;
+  $("k_cr").textContent = fmt(s.compression_ratio,1)+"×";
+  $("k_br").textContent = fmtBps(s.bitrate_bps);
+  const rawBps = S ? S.channels.length * S.fs * 16 : 3200;
+  $("k_br_s").textContent = "raw needs " + fmtBps(rawBps);
+  $("k_prd").textContent = fmt(s.prd_delivered,1)+" %";
+  $("k_loss").textContent = fmt(100*s.packet_loss,1)+" % lost";
+  $("k_lat").textContent = `${s.frames_lost} frames lost · latency ${fmt(s.mean_latency_s*1000,0)} ms avg, ${fmt(s.max_latency_s,1)} s max`;
+  $("k_pw").textContent = fmt(s.tx_power_mw*1000,0)+" µW";
+  const sav = s.energy_saving_pct;
+  $("k_pw_s").innerHTML = sav >= 0 ? `<b>${fmt(sav,0)} % less</b> than raw streaming` : `${fmt(-sav,0)} % more than raw streaming`;
+  $("k_bat").textContent = fmt(s.battery_h/24,1)+" days";
+  $("k_bat_s").textContent = `raw: ${fmt(s.battery_h_raw/24,1)} days (incl. 0.5 mW front end)`;
+  const mp = $("modeNow"); mp.textContent = (m.status==="ok" ? "" : "LOST · ") + m.mode; mp.style.color = m.status==="ok" ? CODEC_COLORS[m.codec] : "var(--red)";
+
+  // detectors
+  let calibrating = false;
+  for (const [name, o] of Object.entries(m.device)){
+    const d = detInfo[name]; if (!d) continue;
+    const bar = $("bar_"+name), pill = $("pill_"+name);
+    if (o.label){ pill.textContent = o.label; pill.classList.add("on"); pill.style.background = d.color; bar.style.width = "0%"; continue; }
+    if (o.score === null){ calibrating = calibrating || name !== "artifact"; bar.style.width = "0%"; pill.textContent = "learning"; pill.classList.remove("on"); pill.style.background = ""; continue; }
+    const thr = d.threshold, frac = Math.max(0, Math.min(1, o.score / (thr*2)));
+    bar.style.width = (100*frac)+"%";
+    bar.parentElement.querySelector(".thr").style.left = "50%";
+    pill.textContent = o.active ? "ACTIVE" : fmt(o.score,1);
+    pill.classList.toggle("on", o.active); pill.style.background = o.active ? d.color : "";
+  }
+  $("calib").textContent = calibrating ? "Learning this person's baseline…" : "Scores are z-scores against this person's own baseline (artifact: 1 = bad signal).";
+
+  for (const a of m.alerts) if (a.critical) showBanner(a);
+  renderFeed(m.events);
+  const st = [
+    ["Source", (S && S.sources.find(x=>x.id===S.source)||{}).title || "–"],
+    ["Ground truth now", m.truth.length ? m.truth.join(", ") : (m.label || "none")],
+    ["Frame", `${m.bytes} B in ${m.packets} packet(s), ${m.attempts} attempt(s)`],
+    ["Radio / alerts / compute", `${fmt(s.energy_radio_j*1000,1)} / ${fmt(s.energy_alert_j*1000,2)} / ${fmt(s.energy_compute_j*1000,1)} mJ`],
+    ["Raw streaming would use", fmt(s.raw_tx_power_mw*1000,0)+" µW"],
+  ];
+  $("stats").innerHTML = st.map(([a,b]) => `<div class="stat"><span>${a}</span><span>${b}</span></div>`).join("");
+}
+
+let bannerTimer = null;
+function showBanner(a){
+  const b = $("banner");
+  const lat = a.alert_latency_s === null ? "all alert copies were lost: the receiver will learn from the data stream" : `alert reached the receiver in ${fmt(a.alert_latency_s*1000,0)} ms (${a.copies_delivered} of ${S.alert_copies} copies arrived)`;
+  b.innerHTML = `⚠ ${a.title.toUpperCase()} DETECTED ON THE WEARABLE<small>${lat}</small>`;
+  b.style.display = "block"; clearTimeout(bannerTimer); bannerTimer = setTimeout(() => b.style.display = "none", 6000);
+}
+
+function renderFeed(events){
+  if (!events || !events.length) return;
+  const items = events.slice().reverse().map(e => {
+    const d = detInfo[e.detector] || {title:e.detector, color:"#888"};
+    if (e.t_onset_device === null){
+      return `<div class="ev"><div class="t">receiver only · t = ${fmt(e.t_onset_receiver,1)} s</div><b style="color:${d.color}">${d.title}</b> flagged from the compressed stream but not on the wearable (likely a compression or loss artefact)</div>`;
+    }
+    let lines = [];
+    if (d.critical) lines.push(e.t_alert_arrival === null ? `<span style="color:var(--red)">all ${S ? S.alert_copies : ""} alert copies lost</span>` : `alert at receiver after <b>${fmt((e.t_alert_arrival - e.t_onset_device)*1000,0)} ms</b> (${e.alert_copies_delivered} copies)`);
+    if (e.t_onset_receiver !== null) lines.push(`receiver-side detection on the compressed stream: <b>${fmt(e.t_onset_receiver - e.t_onset_device,1)} s</b> later`);
+    else lines.push(`receiver-side detection: <i>not yet</i>`);
+    const dur = e.t_offset_device !== null ? ` · lasted ${fmt(e.t_offset_device - e.t_onset_device,0)} s` : " · ongoing";
+    return `<div class="ev ${d.critical?'crit':''}" style="border-left-color:${d.color}"><div class="t">t = ${fmt(e.t_onset_device,0)} s${dur}</div><b style="color:${d.color}">${d.title}</b> detected on the wearable<br>${lines.join("<br>")}</div>`;
+  });
+  $("feed").innerHTML = items.join("");
+}
+
+// ---------------- drawing ---------------- //
+function setup(c){
+  const dpr = window.devicePixelRatio || 1, w = c.clientWidth, h = +c.getAttribute("height");
+  if (c.width !== Math.round(w*dpr)){ c.width = Math.round(w*dpr); c.height = Math.round(h*dpr); c.style.height = h+"px"; }
+  const g = c.getContext("2d"); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,w,h); return [g,w,h];
+}
+let scale = 60;
+function drawEEG(){
+  const [g,w,h] = setup($("eeg"));
+  if (!frames.length || !S) { g.fillStyle="#8a96b3"; g.fillText("waiting for data…", 20, 30); return; }
+  const fs = S.fs, fsec = S.frame_s, last = frames[frames.length-1];
+  const prog = Math.min(1, (performance.now()-lastArrival)/1000 * S.speed / fsec);
+  const right = last.t - fsec + prog*fsec, left = right - WINDOW_S;
+  const C = last.orig.length, lane = h / C, x = t => (t-left)/WINDOW_S*w;
+  // autoscale on visible original
+  // autoscale on the 99th percentile of the visible original (robust to artifact spikes)
+  const vals = []; for (const f of frames) if (f.t > left) for (const ch of f.orig) for (let i = 0; i < ch.length; i += 3) vals.push(Math.abs(ch[i]));
+  vals.sort((a,b) => a-b);
+  const mx = Math.max(20, vals.length ? vals[Math.floor(vals.length*0.99)] * 1.15 : 60);
+  scale += (Math.min(mx, 600) - scale) * 0.08;
+  for (const f of frames){
+    const t0 = f.t - fsec; if (f.t < left || t0 > right) continue;
+    for (const k of f.truth){ g.fillStyle = (TRUTH_COLORS[k]||"#888")+"22"; g.fillRect(x(t0),0,x(f.t)-x(t0)+1,h); }
+    if (f.status !== "ok"){ g.fillStyle = "#ef444440"; g.fillRect(x(t0),0,x(f.t)-x(t0)+1,h); }
+  }
+  g.strokeStyle = "#25304d"; g.lineWidth = 1;
+  for (let s = Math.ceil(left); s <= right; s++){ g.beginPath(); g.moveTo(x(s),0); g.lineTo(x(s),h); g.stroke(); }
+  for (let c = 0; c < C; c++){
+    const y0 = lane*(c+0.5), k = lane*0.45/scale;
+    g.fillStyle = "#8a96b3"; g.font = "11px system-ui"; g.fillText((S.channels[c]||"ch"+c) + `  ±${Math.round(scale)} µV`, 8, lane*c+14);
+    g.save(); g.beginPath(); g.rect(0, lane*c, w, lane); g.clip();  // keep spikes inside their lane
+    for (const which of ["orig","recon"]){
+      for (const f of frames){
+        const t0 = f.t - fsec; if (f.t < left || t0 > right) continue;
+        if (which === "recon" && f.status !== "ok") continue;
+        const arr = f[which][c], n = arr.length;
+        g.beginPath();
+        for (let i = 0; i < n; i++){
+          const tt = t0 + i/fs; if (tt > right) break;
+          const px = x(tt), py = y0 - arr[i]*k;
+          i ? g.lineTo(px,py) : g.moveTo(px,py);
+        }
+        g.strokeStyle = which === "orig" ? "#cbd5e1" : (CODEC_COLORS[f.codec]||"#34d399");
+        g.globalAlpha = which === "orig" ? 0.55 : 0.95; g.lineWidth = which === "orig" ? 1.6 : 1.1; g.stroke(); g.globalAlpha = 1;
+      }
+    }
+    g.restore();
+  }
+}
+function drawTimeline(){
+  const [g,w,h] = setup($("timeline"));
+  if (!frames.length || !S) return;
+  const last = frames[frames.length-1], left = last.t - HIST_S, fsec = S.frame_s;
+  const dets = S.detectors.filter(d => d.name !== "sleep"), rowH = h / dets.length, x = t => (t-left)/HIST_S*(w-90)+90;
+  dets.forEach((d,i) => {
+    const y = i*rowH;
+    g.fillStyle = "#8a96b3"; g.font = "12px system-ui"; g.fillText(d.title, 4, y+rowH*0.55);
+    for (const f of frames){
+      const t0 = f.t - fsec; if (f.t < left) continue;
+      for (const [who, yy, hh] of [["device", y+3, rowH*0.55], ["receiver", y+rowH*0.62, rowH*0.22]]){
+        const o = (f[who]||{})[d.name]; if (!o) continue;
+        let a = o.score === null ? 0.05 : Math.max(0.06, Math.min(1, o.score/(d.threshold*1.5)));
+        if (who === "receiver" && f.status !== "ok"){ g.fillStyle = "#ef444466"; g.fillRect(x(t0), yy, x(f.t)-x(t0)-1, hh); continue; }
+        g.globalAlpha = o.active ? 1 : a*0.55; g.fillStyle = d.color; g.fillRect(x(t0), yy, x(f.t)-x(t0)-1, hh); g.globalAlpha = 1;
+      }
+      if (f.truth.includes(d.name)){ g.fillStyle = "#ffffff"; g.fillRect(x(t0), y+rowH-3, x(f.t)-x(t0), 2); }
+    }
+  });
+  g.fillStyle = "#8a96b3"; g.font = "10px system-ui"; g.fillText("white line = ground truth", w-130, h-4);
+}
+function drawBytes(){
+  const [g,w,h] = setup($("bytes"));
+  if (!frames.length || !S) return;
+  const n = Math.round(HIST_S / S.frame_s), bw = w / n, mx = Math.log10(4000);
+  frames.slice(-n).forEach((f,i) => {
+    const v = Math.log10(Math.max(1, f.bytes)) / mx, bh = Math.max(2, v*(h-14));
+    g.fillStyle = f.status === "ok" ? CODEC_COLORS[f.codec] : "#ef4444";
+    g.fillRect(i*bw+1, h-bh, bw-2, bh);
+  });
+  g.fillStyle = "#8a96b3"; g.font = "10px system-ui";
+  const raw = S.channels.length * S.fs * S.frame_s * 2, yr = h - Math.log10(raw)/mx*(h-14);
+  g.strokeStyle = "#9ca3af88"; g.setLineDash([4,4]); g.beginPath(); g.moveTo(0,yr); g.lineTo(w,yr); g.stroke(); g.setLineDash([]);
+  g.fillText(`raw = ${raw} B/frame`, 4, yr-3);
+}
+function tick(){ drawEEG(); drawTimeline(); drawBytes(); requestAnimationFrame(tick); }
+
+fetch("/api/state").then(r => r.json()).then(s => { applyState(s); connect(); tick(); });
+</script>
+</body>
+</html>
