@@ -187,13 +187,14 @@ def time_to_alert(engine: StreamEngine, det: str = "seizure", kind: str = "seizu
 
 
 def _summ(times: list[float]) -> dict:
+    """Median and 90th percentile with misses counted as infinitely late (shown as "never")."""
     a = np.asarray(times, dtype=float)
-    ok = a[np.isfinite(a)]
     n = len(a)
+    late = np.where(np.isfinite(a), a, np.inf)
     return {
         "n": n,
-        "median_s": float(np.median(ok)) if ok.size else np.nan,
-        "p90_s": float(np.percentile(np.where(np.isfinite(a), a, 1e9), 90)) if n else np.nan,  # misses count as infinitely late
+        "median_s": float(np.median(late)) if n else np.nan,
+        "p90_s": float(np.percentile(np.where(np.isfinite(a), a, 1e12), 90)) if n else np.nan,
         "within_2s": float(np.mean(np.isfinite(a) & (a <= 2))) if n else np.nan,
         "within_5s": float(np.mean(np.isfinite(a) & (a <= 5))) if n else np.nan,
         "missed": float(np.mean(~np.isfinite(a))) if n else np.nan,
@@ -253,7 +254,10 @@ def summarize_speed(df: pd.DataFrame) -> pd.DataFrame:
     for k, g in df.groupby(["profile", "event", "scenario", "x", "system"], sort=False):
         first, conf = _summ(g["first_s"]), _summ(g["confirmed_s"])
         out.append({**dict(zip(["profile", "event", "scenario", "x", "system"], k)), "events": first["n"], "first_median_s": first["median_s"], "first_p90_s": first["p90_s"], "within_2s": first["within_2s"], "within_5s": first["within_5s"], "missed": first["missed"], "confirmed_median_s": conf["median_s"], "tx_power_mw": g["tx_power_mw"].mean()})
-    return pd.DataFrame(out)
+    df = pd.DataFrame(out)
+    for c in ("first_p90_s",):
+        df.loc[df[c] > 1e11, c] = np.inf
+    return df
 
 
 def ablation_experiment(model, runs: int, minutes: float):
@@ -272,7 +276,7 @@ def ablation_experiment(model, runs: int, minutes: float):
                 local += [r["local_alarm_s"] for r in tt]
                 power.append(eng.summary()["tx_power_mw"])
             s = _summ(times)
-            rows.append({"scenario": name, "system": sysname, "events": s["n"], "first_median_s": s["median_s"], "first_p90_s": s["p90_s"], "within_5s": s["within_5s"], "missed": s["missed"], "confirmed_median_s": _summ(conf)["median_s"], "local_alarm_share": float(np.mean(np.isfinite(local))) if local else np.nan, "tx_power_mw": float(np.mean(power))})
+            rows.append({"scenario": name, "system": sysname, "events": s["n"], "first_median_s": s["median_s"], "first_p90_s": np.inf if s["p90_s"] > 1e11 else s["p90_s"], "within_5s": s["within_5s"], "missed": s["missed"], "confirmed_median_s": _summ(conf)["median_s"], "local_alarm_share": float(np.mean(np.isfinite(local))) if local else np.nan, "tx_power_mw": float(np.mean(power))})
         log.warning("ablation %s done", name)
     return pd.DataFrame(rows)
 
@@ -429,7 +433,7 @@ def chbmit_experiment(patient: str, n_files: int, download: bool, model, out: Pa
     sp_sum = []
     for k, g in sp.groupby(["detector", "system"], sort=False):
         s = _summ(g["first_s"])
-        sp_sum.append({"detector": k[0], "system": k[1], "seizures": s["n"], "receiver_knows_median_s": s["median_s"], "receiver_knows_p90_s": s["p90_s"], "within_5s": s["within_5s"], "missed": s["missed"]})
+        sp_sum.append({"detector": k[0], "system": k[1], "seizures": s["n"], "receiver_knows_median_s": s["median_s"], "receiver_knows_p90_s": np.inf if s["p90_s"] > 1e11 else s["p90_s"], "within_5s": s["within_5s"], "missed": s["missed"]})
     return agg, pd.DataFrame(per_seizure), pd.DataFrame(sp_sum), [(n, sz) for n, _, sz in recs]
 
 
@@ -438,7 +442,7 @@ def chbmit_experiment(patient: str, n_files: int, download: bool, model, out: Pa
 # --------------------------------------------------------------------------- #
 def _never(ax, ymax):
     ax.axhline(ymax, color="k", lw=0.5, ls=":")
-    ax.text(ax.get_xlim()[0], ymax, " never / > 60 s", fontsize=7, va="bottom")
+    ax.text(0.01, ymax, "never / > 60 s", fontsize=7, va="bottom", transform=ax.get_yaxis_transform())
 
 
 def plot_headline(summary: pd.DataFrame, path: Path, profile: str = "general") -> None:
@@ -454,10 +458,10 @@ def plot_headline(summary: pd.DataFrame, path: Path, profile: str = "general") -
             g = g0[g0.system == sysname].sort_values("x")
             if g.empty:
                 continue
-            y = g["first_median_s"].fillna(ymax).clip(upper=ymax)
+            y = g["first_median_s"].replace(np.inf, np.nan).fillna(ymax).clip(upper=ymax)
             ax.plot(g["x"], y, "o-", color=SYS_COLORS[sysname], label=lab + (" (first warning)" if sysname == "pulselink" else ""), lw=2.5 if sysname == "pulselink" else 1.5)
             if sysname == "pulselink":
-                ax.plot(g["x"], g["confirmed_median_s"].fillna(ymax).clip(upper=ymax), "s--", color=SYS_COLORS[sysname], alpha=0.6, label="PulseLink (confirmed alert)")
+                ax.plot(g["x"], g["confirmed_median_s"].replace(np.inf, np.nan).fillna(ymax).clip(upper=ymax), "s--", color=SYS_COLORS[sysname], alpha=0.6, label="PulseLink (confirmed alert)")
         if logx:
             ax.set_xscale("log")
         ax.set_yscale("log")
@@ -466,10 +470,10 @@ def plot_headline(summary: pd.DataFrame, path: Path, profile: str = "general") -
         ax.grid(alpha=0.3, which="both")
         _never(ax, ymax)
     axes[0].set_ylabel(f"{ev} onset -> receiver knows (s, median)")
-    axes[0].legend(fontsize=7, loc="upper left")
+    fig.legend(*axes[0].get_legend_handles_labels(), loc="lower center", ncol=5, fontsize=8, frameon=False)
     g = d[d.scenario.str.startswith("30 s")]
     order = [s for s in SYSTEMS if s in set(g.system)]
-    vals = [g[g.system == s]["first_median_s"].fillna(ymax).clip(upper=ymax).mean() for s in order]
+    vals = [g[g.system == s]["first_median_s"].replace(np.inf, np.nan).fillna(ymax).clip(upper=ymax).mean() for s in order]
     axes[2].bar(range(len(order)), vals, color=[SYS_COLORS[s] for s in order])
     axes[2].set_xticks(range(len(order)))
     axes[2].set_xticklabels([s.replace("_", "\n") for s in order], fontsize=8)
@@ -478,8 +482,8 @@ def plot_headline(summary: pd.DataFrame, path: Path, profile: str = "general") -
     for i, v in enumerate(vals):
         axes[2].text(i, v, f"{v:.1f}", ha="center", va="bottom", fontsize=8)
     axes[2].grid(alpha=0.3, axis="y")
-    fig.suptitle(f"Fastest reliable alert: how long until the receiver knows about a {ev}?", fontsize=12)
-    fig.tight_layout()
+    fig.suptitle(f"Fastest reliable alert: how long until the receiver knows about a {ev}? (median; misses count as never)", fontsize=12)
+    fig.tight_layout(rect=(0, 0.07, 1, 1))
     fig.savefig(path, dpi=150)
     plt.close(fig)
 
@@ -489,7 +493,7 @@ def plot_ablation(df: pd.DataFrame, path: Path) -> None:
     fig, axes = plt.subplots(1, len(scen), figsize=(6 * len(scen), 3.8), sharey=True)
     for ax, s in zip(np.atleast_1d(axes), scen):
         g = df[df.scenario == s]
-        y = g["first_median_s"].fillna(60).clip(upper=60)
+        y = g["first_median_s"].replace(np.inf, np.nan).fillna(60).clip(upper=60)
         ax.barh(range(len(g)), y, color=[SYS_COLORS.get(x, "#999") for x in g.system])
         ax.set_yticks(range(len(g)))
         ax.set_yticklabels(g.system)
@@ -646,7 +650,7 @@ def _md(df: pd.DataFrame, floatfmt=".3g") -> str:
     d = df.copy()
     for c in d.columns:
         if d[c].dtype.kind == "f":
-            d[c] = d[c].map(lambda v: "" if pd.isna(v) else f"{v:{floatfmt}}")
+            d[c] = d[c].map(lambda v: "" if pd.isna(v) else ("never" if np.isinf(v) else (f"{v:.0f}" if c == "x" and v >= 100 else f"{v:{floatfmt}}")))
     return "| " + " | ".join(d.columns) + " |\n|" + "---|" * len(d.columns) + "\n" + "\n".join("| " + " | ".join(str(v) for v in row) + " |" for row in d.values)
 
 
@@ -706,7 +710,7 @@ def run_all(out: Path, model=None, runs: int = 12, minutes: float = 10.0, chbmit
                 f"\n## 7. CHB-MIT {chbmit}: real seizures (F7-T7 and F8-T8, 16 kbit/s, 5 % loss)\n\n"
                 f"Files: {', '.join(f'{n} ({len(s)} seizure(s))' for n, s in files)}. Learned detectors are trained leave-one-file-out "
                 "(each file is tested by a model that never saw it). `pulselink` = detection on the wearable; `stream` = typical wearable, detection at the receiver.\n\n"
-                + _md(agg[cols]) + "\n\nWhen did the receiver know (first warning or alert, from annotated onset):\n\n" + _md(sp) + "\n"
+                + _md(agg[~((agg.system == "pulselink") & (agg.side == "receiver"))][cols]) + "\n\nWhen did the receiver know (first warning or alert, from annotated onset):\n\n" + _md(sp) + "\n"
             )
         except Exception as exc:  # noqa: BLE001
             log.exception("CHB-MIT failed")

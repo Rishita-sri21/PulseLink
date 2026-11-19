@@ -1,138 +1,161 @@
 # PulseLink
 
-**Energy-aware, frequency-preserving EEG compression and reconstruction.**
+**The fastest reliable alert from a wearable EEG, even on a bad link.**
 
-PulseLink compresses multichannel EEG on a (simulated) wearable transmitter,
-sends it over a constrained wireless link with packet loss, limited bandwidth
-and disconnections, reconstructs it at the receiver, flags segments that
-should not be trusted, and measures how much transmitter energy is saved
-compared with streaming raw samples.
+When something happens in the brain (a seizure, a driver nodding off, an electrode
+falling off), someone else needs to know within seconds. PulseLink is the layer
+between an EEG sensor (OpenBCI, Muse, a clinical headband...) and the person who
+has to react. It detects events **on the wearable**, sends the decision first
+over a **priority link**, keeps compressed EEG flowing in the background, and
+makes sure the alert arrives even when the link is slow, lossy or down.
 
 ```
-Sleep-EDF / synthetic EEG
-   │  preprocessing/   band-pass 0.5–40 Hz, 30 s segments, per-segment z-score
-   ▼
-Transmitter
-   │  compression/     raw | DWT baseline | 1D conv autoencoder (frequency-aware loss)
-   │                   quantisation + real bitstream  ·  adaptive, energy-aware controller
-   ▼
-Channel             communication/  bandwidth, Bernoulli/bursty loss, jitter, outages,
-   │                                transmit buffer, optional ARQ
-   ▼
-Receiver            reconstruction/ reassembly, decoding, loss concealment,
-   │                                reliability flags (without the original)
-   ▼
-Evaluation          evaluation/     PRD/RMSE/SNR, PSD and band-power error, sleep-stage
-                                    accuracy, energy model, experiments  ·  dashboard/
+EEG sensor ──► WEARABLE ─────────────────────────────────────────────► LINK ─────────────► PHONE / CAREGIVER
+               causal filter, shared features every 0.5 s             P0 critical alert   notification centre
+               ├─ early stage (2 s window): "possible seizure" ──P1──►  (ACK, 2 spaced     (acknowledge, escalate,
+               ├─ detector (4 s window): "seizure confirmed" ───P0──►   copies, backup     optional phone push)
+               ├─ heartbeat when the queue is busy ─────────────P1──►   radio, preempts    "monitoring offline"
+               └─ compression: low rate normally (P3),                  data packets)      watchdog
+                  high fidelity + last 10 s around events (P2) ─────►  P2/P3 EEG, stale    decoded EEG, receiver-
+                                                                       P3 dropped          side detectors
 ```
 
-Everything runs on a laptop CPU. If Sleep-EDF is not downloaded, PulseLink
-falls back to **synthetic sleep EEG** so every script, test and the dashboard
-still work.
+What makes it different from "stream the EEG and let the phone decide":
+
+| | Typical wearable | PulseLink |
+|---|---|---|
+| Where the decision is made | on the phone, after the EEG has crossed the link | on the wearable, on the clean signal |
+| First warning | after the full detector window (~4 s) plus queueing | **two-stage**: "possible event" after ~1.5 s, confirmed after ~4 s |
+| Slow or congested link | alert waits behind EEG; can take minutes or never arrive | alerts jump the queue and may interrupt a data packet |
+| Packet loss | the event is missed or late | ACK + retry + two copies spaced in time |
+| Link down | nothing until it comes back | backup radio after 0.5 s, local buzz after 2 s, phone shows "monitoring offline" |
+| Bandwidth | one fixed codec | event-aware compression with a task-aware autoencoder |
+| Use cases | one closed feature | profiles: epilepsy, driver fatigue, focus, general; plug-in detectors |
 
 ## Quick start
 
 ```bash
 pip install -r requirements.txt
 
-python main.py run --quick            # whole pipeline + experiments (~1.5 min on a laptop CPU)
-streamlit run dashboard/app.py        # interactive demo
-python main.py demo                   # PulseLink Live: real-time web demo
-pytest                                # 52 tests, ~20 s
+python main.py demo                     # PulseLink Live, opens http://localhost:8050
+python run_realtime_study.py            # every result + a zip to share (~1 h on a laptop CPU)
+pytest                                  # ~65 tests
 ```
 
-With real data:
+## PulseLink Live (the demo)
 
 ```bash
-python main.py run --download --retrain              # fetch Sleep-EDF subjects 0-3, night 1 (~200 MB) and train
-python main.py run --download --retrain --nights 1 2 # both nights per subject (~390 MB), as in the results below
-python main.py run --real                            # later runs: use the downloaded files, fail if missing
+python main.py demo                         # demo tour: every use case in 4 minutes
+python main.py demo --profile driver        # drowsiness is the critical event
+python main.py demo --host 0.0.0.0          # open it from a phone on the same Wi-Fi
+PULSELINK_NTFY_TOPIC=my-secret-topic python main.py demo   # also push alerts to your phone (ntfy app)
 ```
 
-`--download` tries physionet.org first and falls back to PhysioNet's AWS Open
-Data mirror (`physionet-open.s3.amazonaws.com`) when physionet.org is blocked,
-which is common on cloud machines and campus proxies. Every file is checked
-against the dataset's published SHA-256 sums. Training on CPU takes about
-20 s per epoch on 8 nights (60 epochs by default, ~20 min).
+![PulseLink Live: same seizure, same bad link, PulseLink vs a typical wearable](docs/live_demo.png)
+
+The dashboard runs **two systems on the same EEG and the same link**: PulseLink, and a typical wearable
+that streams compressed EEG over one queue and detects on the phone. The top of the page is a race:
+how many seconds after the true onset each phone learns about the event.
+
+How to demo it (about 3 minutes):
+
+1. Start the tour. While the baseline is learned (~15 s), point at the EEG, the detectors and the phone panel.
+2. Drag **bandwidth to 800 bit/s** and **packet loss to 20 %** with **bursts**. Watch the typical wearable's
+   queue grow while PulseLink's stays small (routine EEG is compressed and stale data is dropped).
+3. At t = 160 s the seizure starts: PulseLink shows *Possible seizure* after ~1.5 s and *Seizure confirmed*
+   after ~4 s; the typical wearable is still seconds behind.
+4. Press **Cut the link for 30 s** just before an event (or switch to the **driver** profile and cut the link
+   before the drowsiness at t = 90 s): the alert goes over the **backup radio**, the phone flags
+   *monitoring offline*, and the typical wearable only knows after the link returns.
+5. Press **Ack** on the phone to show acknowledgement; unacknowledged critical alerts escalate after 30 s.
+
+Sources: the demo tour, a calm synthetic stream with buttons to trigger events, downloaded CHB-MIT files
+(real seizures), Sleep-EDF nights, or any EDF (`--edf file.edf --edf-channels F7-T7 F8-T8`). Trained
+detectors from the study can be added with `--learned results/realtime/learned_seizure_gbm_chb01.pkl`.
+
+## Results: what to run and send back
 
 ```bash
-```
-
-Other commands:
-
-```bash
-python main.py train --retrain --epochs 40                 # train only (writes models/pulselink_ae.pt)
-python main.py stream --method adaptive --bandwidth 1600 --loss 0.05 --retries 2
-python main.py stream --method raw --outage 300 120        # 120 s disconnection at t = 300 s
-```
-
-`main.py run` writes CSVs, `summary.md` and figures to `results/`.
-Training on Colab: open a notebook, `!git clone` the repo, `!pip install -r requirements.txt`,
-then `!python main.py train --download --retrain --epochs 60` (uses the GPU automatically).
-
-## PulseLink Live: real-time demo
-
-```bash
-python main.py demo                       # opens http://localhost:8050
-python main.py demo --host 0.0.0.0        # let phones/laptops on the same Wi-Fi open it
-```
-
-![PulseLink Live during a seizure in the demo tour](docs/live_demo.png)
-
-A live dashboard (Python standard library only, no extra installs) that streams
-EEG frame by frame through the whole system:
-
-```
-EEG source ──► wearable: causal filter ─► detectors (on raw signal) ─► policy ─► codec ─┐
- (synthetic / Sleep-EDF /           │                                                  │
-  CHB-MIT / any EDF)                └─► critical event? ─► 12-byte alert, 3 copies ───┤
-                                                                                       ▼
-                          receiver ◄── lossy, bandwidth-limited link (loss, bursts, outages, ARQ)
-                          decode ─► detectors on the reconstructed signal ─► compare latency
-```
-
-What you can show:
-
-* **Original vs reconstructed EEG** scrolling live, coloured by the codec in use, with lost frames marked.
-* **Pluggable event detectors** with live scores: seizure, drowsiness, focus (engagement index), artifact or
-  electrode off, plus sleep stage and any `LearnedDetector` trained from labels. They learn the wearer's
-  baseline in the first ~15 s.
-* **Alerts**: when a *critical* detector fires, an alert packet skips the data queue (banner shows how many ms it took),
-  the last 10 s are re-sent at high fidelity, and the stream stays high fidelity until 10 s after the event.
-* **Buttons** to trigger a seizure, drowsiness, focus, sleep, a movement artifact or an electrode falling off, and to cut
-  the link for 10 s. **Sliders** for packet loss, burstiness, bandwidth, ARQ and alert redundancy.
-* **KPIs**: compression ratio, bitrate, PRD, packet loss and latency, radio+compute power, energy saving vs raw, and
-  battery life on a 100 mAh cell.
-
-The "Demo tour" source plays every use case in about 4 minutes. Downloaded CHB-MIT files
-(`python main.py realtime --chbmit chb01 --download`) and Sleep-EDF nights appear in the source list
-automatically; `--edf file.edf --edf-channels F7-T7 F8-T8` streams any EDF. Add a learned detector with
-`--learned results/realtime/learned_seizure_chb01.pkl`.
-
-## Real-time study: what to run and send back
-
-```bash
-python run_realtime_study.py              # ~15-30 min; downloads CHB-MIT chb01 (~250 MB) once
-python run_realtime_study.py --quick      # 2-minute smoke test
+python run_realtime_study.py              # synthetic + CHB-MIT chb01 (downloads ~250 MB once), ~1 h
+python run_realtime_study.py --patient chb03   # another CHB-MIT patient
+python run_realtime_study.py --quick      # ~10-minute smoke test
 python run_realtime_study.py --no-chbmit  # offline, synthetic only
+python run_realtime_study.py --no-cnn     # skip the CNN on CHB-MIT (faster)
 ```
 
-It writes `results/realtime/` and packs it into **`pulselink_realtime_results.zip`**: that zip is what to
-share. Inside:
+It writes `results/realtime/` and packs it into **`pulselink_realtime_results.zip`**: send that zip back.
 
 | File | Question it answers |
 |---|---|
-| `summary.md` | all tables below, readable |
-| `usecase_detection.csv` | per use case / policy / loss: sensitivity, false alarms per hour, detection latency on the wearable and at the receiver |
-| `alert_delivery.csv` | how often an alert never arrives, by loss rate, burstiness, number and spacing of copies |
-| `bandwidth_latency.csv` | when the receiver learns about a seizure vs link capacity and a 30 s outage |
-| `policy_cost.csv` | bitrate, PRD overall and during seizures, transmitter power, energy saving, battery life per policy |
-| `chbmit_<patient>_detection.csv`, `_per_seizure.csv` | the same on real CHB-MIT seizures (rule-based and patient-specific learned detector) |
-| `figures/*.png`, `run.log` | plots, and the log for debugging |
+| `summary.md` | every table, readable |
+| `alert_speed.csv`, `figures/headline_time_to_alert*.png` | **headline**: how long until the receiver knows, PulseLink vs typical wearables, as bandwidth drops, loss rises or the link goes down (seizure; drowsiness with the driver profile) |
+| `ablation.csv`, `figures/ablation.png` | what each part adds: on-device detection, priority, early warning, ACK + copies, backup radio |
+| `usecase_detection.csv` | per use case: sensitivity, false alarms per hour, early-warning and detection latency, false early warnings |
+| `task_compression.csv`, `figures/task_aware_compression.png` | do the detectors still work after compression? base vs task-aware autoencoder |
+| `policy_cost.csv` | bitrate, PRD (overall and during seizures), radio power, battery life per policy |
+| `alert_delivery.csv` | how often an alert without ACK is lost, by copies, spacing and burstiness |
+| `chbmit_<patient>_*.csv` | real seizures: rule-based, logistic regression, boosted trees and tiny CNN, leave-one-file-out; when the receiver knew |
+| `figures/`, `run.log` | plots, and the log for debugging |
 
-Sample output on synthetic data: [`docs/sample_results_realtime_synthetic.md`](docs/sample_results_realtime_synthetic.md).
+### Headline results (synthetic study + CHB-MIT chb01, 20 min run)
+
+Median seconds from true seizure onset until the phone knows (11 events per condition):
+
+| Link condition | PulseLink first warning | PulseLink confirmed | Typical wearable (DWT stream) | Raw stream |
+|---|---|---|---|---|
+| 16 kbit/s, clean | **1.5 s** | 4.0 s | 4.1 s | 6.5 s |
+| 800 bit/s | **1.7 s** | | 5.2 s | never (91 % missed) |
+| 40 % bursty loss | **1.7 s** | | 8.1 s (p90 22 s) | never |
+| 30 s outage at onset | **2.4 s** (backup radio) | 4.9 s | 28.5 s | |
+
+- Driver profile (drowsiness is critical): 1.5 to 1.9 s vs 6 to 19 s; 2.4 s vs 28.4 s during an outage.
+- Ablation (1.6 kbit/s, 20 % bursty loss): on-device detection in one FIFO queue still misses 18 % of
+  alerts; priority + ACK + copies bring that to 0, and the early stage cuts the median from ~4.1 s to 1.6 s.
+  Only the backup radio helps when the link is down (28.3 s to 2.4 s).
+- Task-aware autoencoder: the receiver's drowsiness and attention detectors keep sensitivity 1.0 after
+  compression (base autoencoder: 0.57 and 0.17), at compression ratio 11.3. The event policy keeps PRD
+  during seizures at 4.2 % and still saves 71 % radio energy.
+- CHB-MIT chb01 (real seizures, leave-one-file-out): all four detectors find 4/4 seizures. False alarms per
+  hour: rule-based 4.8, logistic regression 2.2, boosted trees 1.0, tiny CNN 1.5. With the rule-based detector
+  the phone knows after a median 1.3 s, vs 8.1 s for the typical-wearable baseline.
+
+Caveats: link conditions and most events are simulated; CHB-MIT here is one patient; the rule-based early
+stage raises ~4.5 false early warnings per hour (they are P1 "possible" notices and are cancelled if not
+confirmed). Figures: [`headline_time_to_alert.png`](results/realtime/figures/headline_time_to_alert.png),
+[`ablation.png`](results/realtime/figures/ablation.png),
+[`task_aware_compression.png`](results/realtime/figures/task_aware_compression.png) (after running the study).
+
 Background reading on real-time EEG wearables, transmission and detection:
 [`docs/realtime_eeg_research.md`](docs/realtime_eeg_research.md).
+
+## How it works
+
+**Two-stage detection.** Every detector turns the shared window features into a score against the
+wearer's own running baseline (median / MAD), with hysteresis. Critical detectors also get a fast
+early stage: the same score on a 2 s window every 0.5 s, with its own baseline. Two hits in a row raise
+*possible event* (P1); the full detector confirms (P0) or the warning is cancelled after 8 s.
+
+**Priority link** (`communication/priority_link.py`). A discrete-event simulation of a BLE-like link
+(bandwidth, bursty loss in time, outages, MTU 244 B). Five strict-priority classes; P0/P1 can interrupt a
+lower-class packet in flight, have end-to-end ACK and retry, and P0 alerts are sent as two copies 0.1 s
+apart. Routine EEG older than 20 s is dropped instead of being delivered uselessly late. If a P0 alert is
+not ACKed within 0.5 s (or the link is down), it goes over a backup radio (LTE-M / NB-IoT / LoRa class:
+slow, ~0.8 s, ~20 mJ per message, independent of the BLE link). `priority=False` turns it into the single
+FIFO queue of a typical streaming wearable.
+
+**Compression.** Routine EEG uses the PulseLink autoencoder, fine-tuned on 2 s frames with a task loss
+that protects band powers, line length and the ratios the detectors use (`compression/train_streaming.py`,
+saved as `models/pulselink_ae_stream.pt`). Around a critical event the wearable switches to high fidelity,
+re-sends the last 10 s (pre-trigger buffer) and picks the best codec that fits the link.
+
+**Receiver.** Decodes frames as they arrive, conceals lost ones, runs the same detectors on the
+reconstruction (this is the "typical wearable" path), keeps the notification centre and raises
+*monitoring offline* when nothing has arrived for 6 s: silence is never shown as "all clear".
+
+**ML.** Shared features (band powers, line length, rhythmicity, Hjorth mobility and complexity,
+spectral entropy, asymmetry, flat line). Detectors: rule-based with personal baselines, `LearnedDetector`
+(logistic regression or gradient-boosted trees on the features) and `CNNDetector` (tiny 1-D CNN on the
+raw window, ~18 k weights). On CHB-MIT all are trained patient-specific, leave-one-file-out.
 
 ### Adding a new use case
 
@@ -148,7 +171,28 @@ class BlinkDetector(Detector):          # any rule on the shared features
         return z["delta"]
 ```
 
-or train one from labelled windows: `LearnedDetector(name="drowsy").fit(features, labels)`.
+then add a profile in `realtime/profiles.py` that says how urgent it is (`{"blink": 1}` = P1 warning,
+`0` = critical with early warning and backup radio). Or train one from labelled windows:
+`LearnedDetector(name="drowsy", kind="gbm").fit(features, labels)` or `CNNDetector(...).fit(windows, labels)`.
+
+## The offline compression pipeline
+
+PulseLink started as an energy-aware EEG compression study, and that pipeline is still here and
+unchanged: it compresses 30 s Sleep-EDF segments with a DWT baseline and a frequency-aware autoencoder,
+sends them over a simulated link, reconstructs them, flags unreliable segments and measures energy.
+
+```bash
+python main.py run --quick            # whole offline pipeline + experiments (~1.5 min)
+python main.py run --download --retrain              # fetch Sleep-EDF subjects 0-3, night 1 (~200 MB) and train
+python main.py run --download --retrain --nights 1 2 # both nights per subject (~390 MB), as in the results below
+python main.py run --real                            # later runs: use the downloaded files, fail if missing
+streamlit run dashboard/app.py        # offline interactive demo
+python main.py train --retrain --epochs 40
+python main.py stream --method adaptive --bandwidth 1600 --loss 0.05 --retries 2
+```
+
+`--download` tries physionet.org first and falls back to PhysioNet's AWS Open Data mirror when
+physionet.org is blocked. `main.py run` writes CSVs, `summary.md` and figures to `results/`.
 
 ## Repository layout
 
@@ -174,18 +218,23 @@ or train one from labelled windows: `LearnedDetector(name="drowsy").fit(features
 | `evaluation/comparison.py` | Codec benchmark, packet-loss / bandwidth / outage experiments, plots |
 | `pipeline.py` | Glue: data → model → transmitter → channel → receiver → metrics |
 | `dashboard/app.py` | Streamlit demo (offline pipeline) |
-| `realtime/features.py` | Shared per-window features (band powers, line length, rhythmicity, flat line, ...) |
-| `realtime/detectors.py` | Pluggable detectors with personal baselines and hysteresis; `LearnedDetector` for any labelled use case |
+| `realtime/features.py` | Shared per-window features (band powers, line length, rhythmicity, Hjorth, spectral entropy, flat line, ...) |
+| `realtime/detectors.py` | Pluggable detectors with personal baselines, hysteresis and a fast early stage; `LearnedDetector` (logistic regression / boosted trees) and `CNNDetector` (tiny 1-D CNN) |
+| `realtime/profiles.py` | Use-case profiles (epilepsy, driver, focus, general): which detector is critical, priority of each |
 | `realtime/sources.py` | Live synthetic EEG with injectable events, recording replay, CHB-MIT download and loading, any EDF |
-| `realtime/engine.py` | Frame-by-frame wearable → link → receiver engine: event-aware policy, alerts, pre-trigger buffer |
+| `realtime/engine.py` | Wearable → priority link → receiver engine: two-stage detection, alerts, heartbeat, offline watchdog, event-aware compression, presets for comparisons |
+| `realtime/notify.py` | Receiver notification centre: acknowledge, escalate, optional phone push |
+| `communication/priority_link.py` | P0-P4 priority link: preemption, ACK + retry, spaced copies, stale-data deadlines, backup radio, FIFO mode |
+| `compression/train_streaming.py` | Task-aware fine-tune of the autoencoder on 2 s frames (`models/pulselink_ae_stream.pt`) |
 | `realtime/server.py`, `realtime/static/index.html` | PulseLink Live web dashboard (`python main.py demo`) |
 | `realtime/experiments.py` | Real-time experiments and figures (`python main.py realtime`) |
 | `run_realtime_study.py` | One command that runs the real-time study and zips the results |
+| `models/pulselink_ae_stream.pt` | Task-aware streaming autoencoder used by the real-time system (fine-tuned from the model below) |
 | `models/pulselink_ae.pt` | Autoencoder trained on Sleep-EDF subjects 0-2 (6 nights, 60 epochs); subject 3 is held out |
 | `docs/sample_results_sleep_edf.md` | Output of `python main.py run --real --retrain --nights 1 2` |
 | `docs/sample_results_synthetic.md` | Output of `python main.py run --synthetic` |
 
-## Design
+## Design of the offline compression pipeline
 
 ### Preprocessing
 Sleep-EDF EEG is sampled at 100 Hz. Two channels (Fpz-Cz, Pz-Oz) are band-passed

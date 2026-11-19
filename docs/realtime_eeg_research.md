@@ -5,7 +5,9 @@ we **process and transmit EEG in real time** so that an event (a seizure, a driv
 falling asleep, a lapse of attention, a bad electrode) is noticed within seconds,
 on a wearable that runs for days on a small battery? It summarises the main
 techniques and design choices and says which ones PulseLink now implements
-(`realtime/`). Seizures are one example; the same design serves any use case.
+(`realtime/`, `communication/priority_link.py`). Seizures are one example; the
+same design serves any use case. Section 8 lists what is built; the measured
+numbers are in `results/realtime/summary.md` after running the study.
 
 > Treat the product and paper details below as a starting reading list. Check each
 > one against the original source before citing it in the report.
@@ -168,20 +170,42 @@ Report all of these, not only compression ratio and PRD:
 
 ## 8. What PulseLink implements now, and what is next
 
-Implemented (`realtime/`): causal streaming filter; shared features;
-pluggable detectors (seizure, drowsiness, attention, artifact, sleep stage, learned);
-personal baselines with hysteresis; on-device versus receiver-side detection;
-alert packets with redundancy; pre-trigger high-fidelity buffer; bandwidth-aware
-event policy; outage handling; energy and battery estimates; the live dashboard;
-experiments on synthetic data and CHB-MIT.
+PulseLink's distinct advantage is the **fastest reliable alert**: the receiver
+should learn about an event within seconds even when the link is slow, lossy or
+down. Implemented (`realtime/`, `communication/priority_link.py`):
+
+* **Two-stage detection on the wearable.** Every 0.5 s a fast early stage (2 s
+  window) raises a *possible event* warning; the full detector (4 s window)
+  confirms it. Typically 1.5 s instead of 4 s for the first warning.
+* **Priority link (P0-P4).** Critical alerts (P0) and warnings (P1) go ahead of
+  every EEG packet and may interrupt one in flight; EEG around events (P2) goes
+  ahead of routine EEG (P3); stale routine EEG is dropped rather than delivered
+  late.
+* **Reliability for alerts.** End-to-end ACK and retry, two copies spaced in time
+  (bursty loss), a backup radio path when the main link does not ACK within
+  0.5 s, a local alarm on the wearable if nothing is ACKed within 2 s, and a
+  heartbeat so the receiver says "monitoring offline" instead of staying silent.
+* **Notification centre** with acknowledgement and escalation, optional push to
+  a phone (ntfy).
+* **Use-case profiles** (epilepsy, driver, focus, general) that only change which
+  detector is critical; the rest of the system is shared.
+* **ML:** richer features (Hjorth, spectral entropy), logistic regression,
+  gradient-boosted trees and a tiny 1-D CNN (about 18 k weights), compared on
+  CHB-MIT leave-one-file-out; a **task-aware** fine-tune of the autoencoder that
+  keeps the features the detectors need.
+* **Compression stays in the loop:** event-aware codec choice, pre-trigger buffer,
+  bandwidth-aware fidelity.
+* **Evaluation:** time until the receiver knows vs link quality for PulseLink and
+  typical streaming wearables, an ablation of every feature, detection quality,
+  energy and battery.
 
 Next steps, roughly in order of value:
 
-1. Run on CHB-MIT and report per-patient sensitivity, false alarms per hour and latency.
-2. Retrain the autoencoder with a loss that protects the features the detectors use (task-aware compression).
-3. Space alert copies in time and add a store-and-forward buffer and a local alarm to the engine.
-4. Port the feature extractor and detector to an nRF52 or ESP32 and measure the real energy and latency.
-5. Stream from an OpenBCI or Muse headset into `RecordingSource` for a live demo with a real person.
+1. Run on more CHB-MIT patients (`python run_realtime_study.py --patient chb03`) and report per-patient results.
+2. Port the early stage, the detector and the priority scheduler to an nRF52 and measure real latency and energy.
+3. Stream from an OpenBCI or Muse headset (via Lab Streaming Layer) into `RecordingSource` for a live demo with a person.
+4. Replace the analytical backup radio with a real LTE-M or LoRa module and measure its latency.
+5. Seizure *prediction* (minutes ahead) would be the next jump in speed, but needs long recordings and careful validation.
 
 ## References (starting points)
 
