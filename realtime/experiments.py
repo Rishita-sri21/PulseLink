@@ -40,7 +40,8 @@ from realtime.sources import LiveSynthSource, random_schedule  # noqa: E402
 log = logging.getLogger(__name__)
 DETECTOR_TRUTH = {"seizure": "seizure", "drowsiness": "drowsiness", "attention": "attention", "artifact": "artifact"}
 TOLERATED = {"drowsiness": {"postictal"}}  # postictal slowing is not a false drowsiness alarm
-TOL_S = 10.0
+TOL_S = 10.0  # detections up to 10 s after an event ends still count
+PRE_S = 5.0  # ... and up to 5 s before the annotated onset (annotations are approximate)
 
 
 # --------------------------------------------------------------------------- #
@@ -81,7 +82,7 @@ def score_events(engine: StreamEngine, offset_s: float = 0.0) -> list[dict]:
         for side, onsets in (("wearable", dev), ("receiver", rx)):
             lat, alert_lat, alert_lost = [], [], 0
             for s, e in ivs:
-                hits = [t for t in onsets if s <= t <= e + TOL_S]
+                hits = [t for t in onsets if s - PRE_S <= t <= e + TOL_S]
                 if hits:
                     lat.append(hits[0] - s)
                     if side == "wearable" and engine.device._det(det).critical:
@@ -90,7 +91,7 @@ def score_events(engine: StreamEngine, offset_s: float = 0.0) -> list[dict]:
                             alert_lost += 1
                         else:
                             alert_lat.append(ev.t_alert_arrival - s)
-            fa = sum(not any(s <= t <= e + TOL_S for s, e in ok_ivs) for t in onsets)
+            fa = sum(not any(s - PRE_S <= t <= e + TOL_S for s, e in ok_ivs) for t in onsets)
             rows.append({
                 "detector": det,
                 "side": side,
@@ -266,7 +267,7 @@ def chbmit_experiment(patient: str, n_files: int, download: bool, model, out: Pa
                     lat, alert_lat, alerts_lost = [], [], 0
                     by_onset = {e.t_onset_device: e for e in eng.events if e.detector == det_name}
                     for s, e in truth:
-                        hits = [t for t in onsets if s <= t <= e + TOL_S]
+                        hits = [t for t in onsets if s - PRE_S <= t <= e + TOL_S]
                         lat.append(hits[0] - s if hits else np.nan)
                         if hits and side == "wearable" and hits[0] in by_onset:
                             arr = by_onset[hits[0]].t_alert_arrival
@@ -275,7 +276,7 @@ def chbmit_experiment(patient: str, n_files: int, download: bool, model, out: Pa
                             else:
                                 alert_lat.append(arr - s)
                         per_seizure.append({"file": name, "policy": policy, "detector": det_name, "side": side, "seizure_start_s": s, "duration_s": e - s, "detected": bool(hits), "latency_s": hits[0] - s if hits else np.nan})
-                    fa = sum(not any(s <= t <= e + TOL_S for s, e in truth) for t in onsets)
+                    fa = sum(not any(s - PRE_S <= t <= e + TOL_S for s, e in truth) for t in onsets)
                     rows.append({"file": name, "policy": policy, "detector": det_name, "side": side, "seizures": len(truth), "detected": int(np.sum(np.isfinite(lat))), "false_alarms": fa, "hours": eng.t / 3600, "latency_s": [x for x in lat if np.isfinite(x)], "alert_latency_s": alert_lat, "alerts_lost": alerts_lost})
             s = eng.summary()
             log.warning("CHB-MIT %s policy=%s: CR %.1f, saving %.0f %%", name, policy, s["compression_ratio"], s["energy_saving_pct"])

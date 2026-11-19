@@ -236,7 +236,12 @@ class RecordingSource:
 # --------------------------------------------------------------------------- #
 # Real datasets
 # --------------------------------------------------------------------------- #
-CHBMIT_URL = "https://physionet.org/files/chbmit/1.0.0"
+# PhysioNet first, then the byte-identical AWS Open Data mirror (PhysioNet is
+# blocked on some networks, e.g. cloud sandboxes and campus proxies).
+CHBMIT_MIRRORS = (
+    "https://physionet.org/files/chbmit/1.0.0",
+    "https://physionet-open.s3.amazonaws.com/chbmit/1.0.0",
+)
 CHBMIT_DIR = DATA_DIR / "chbmit"
 DEFAULT_CHB_CHANNELS = ("F7-T7", "F8-T8")
 
@@ -261,17 +266,27 @@ def parse_chbmit_summary(text: str) -> dict[str, list[tuple[float, float]]]:
     return out
 
 
-def _fetch(url: str, dest: Path) -> Path:
+def _fetch(rel: str, dest: Path, mirrors=CHBMIT_MIRRORS) -> Path:
+    """Download ``rel`` (path under the dataset root) from the first mirror that works."""
     if dest.exists() and dest.stat().st_size > 0:
         return dest
     dest.parent.mkdir(parents=True, exist_ok=True)
-    log.warning("downloading %s", url)
     tmp = dest.with_suffix(dest.suffix + ".part")
-    with urllib.request.urlopen(url, timeout=120) as r, open(tmp, "wb") as f:
-        while chunk := r.read(1 << 20):
-            f.write(chunk)
-    tmp.rename(dest)
-    return dest
+    errors = []
+    for base in mirrors:
+        url = f"{base}/{rel}"
+        try:
+            log.warning("downloading %s", url)
+            req = urllib.request.Request(url, headers={"User-Agent": "PulseLink"})
+            with urllib.request.urlopen(req, timeout=60) as r, open(tmp, "wb") as f:  # noqa: S310 - fixed https mirrors
+                while chunk := r.read(1 << 20):
+                    f.write(chunk)
+            tmp.rename(dest)
+            return dest
+        except Exception as exc:  # noqa: BLE001 - try the next mirror
+            errors.append(f"{base}: {exc}")
+            tmp.unlink(missing_ok=True)
+    raise OSError("all mirrors failed: " + "; ".join(errors))
 
 
 def fetch_chbmit(patient: str = "chb01", n_seizure_files: int = 4, n_normal_files: int = 2, path: Path | None = None, download: bool = True):
@@ -283,7 +298,7 @@ def fetch_chbmit(patient: str = "chb01", n_seizure_files: int = 4, n_normal_file
     root = Path(path or CHBMIT_DIR) / patient
     summary_path = root / f"{patient}-summary.txt"
     if download:
-        _fetch(f"{CHBMIT_URL}/{patient}/{patient}-summary.txt", summary_path)
+        _fetch(f"{patient}/{patient}-summary.txt", summary_path)
     if not summary_path.exists():
         raise FileNotFoundError(f"no CHB-MIT summary at {summary_path} (use --download)")
     seizures = parse_chbmit_summary(summary_path.read_text())
@@ -293,7 +308,7 @@ def fetch_chbmit(patient: str = "chb01", n_seizure_files: int = 4, n_normal_file
     for name in with_sz + without:
         p = root / name
         if download:
-            _fetch(f"{CHBMIT_URL}/{patient}/{name}", p)
+            _fetch(f"{patient}/{name}", p)
         if p.exists():
             out.append((p, seizures[name]))
     return out
