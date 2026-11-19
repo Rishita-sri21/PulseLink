@@ -4,15 +4,17 @@ import pytest
 
 from config import ChannelConfig
 from realtime.detectors import REGISTRY, LearnedDetector, default_detectors
-from realtime.engine import EngineConfig, StreamEngine, StreamingBandpass
+from realtime.engine import EngineConfig, StreamEngine, StreamingBandpass, preset
 from realtime.experiments import alert_delivery_experiment, score_events, truth_intervals
 from realtime.features import compute_features
 from realtime.sources import LiveSynthSource, RecordingSource, demo_tour, parse_chbmit_summary
 
 
-def run_tour(policy="event", model=None, frames=125, **ch):
+def run_tour(policy="event", model=None, frames=125, finish=True, **ch):
     eng = StreamEngine(LiveSynthSource(seed=1, schedule=demo_tour()), model, ChannelConfig(**ch), cfg=EngineConfig(policy=policy))
     eng.run(frames)
+    if finish:
+        eng.finish()
     return eng
 
 
@@ -21,7 +23,7 @@ def test_features_shapes_and_flatline():
     x = rng.normal(scale=20, size=(2, 400))
     f = compute_features(x, 100.0)
     assert f.total_power > 0 and not f.flat
-    assert f.vector().shape == (20,)
+    assert f.vector().shape == (23,)
     x[0] = 5.0
     assert compute_features(x, 100.0).flat
 
@@ -46,13 +48,16 @@ def test_tour_detects_every_use_case():
     sz = [e for e in eng.events if e.detector == "seizure" and np.isfinite(e.t_onset_device)]
     assert sz and sz[0].t_alert_arrival is not None
     assert sz[0].t_alert_arrival - sz[0].t_onset_device < 0.2
+    # two-stage: the early warning arrived seconds before the confirmation
+    assert sz[0].t_early_arrival is not None and sz[0].t_early_arrival < sz[0].t_alert_arrival - 1.0
+    assert sz[0].t_early_arrival - 160.0 < 2.5
 
 
 def test_event_policy_switches_to_high_fidelity_and_backfills():
     eng = run_tour("event")
     codecs = {r["codec"] for r in eng.records}
     assert "hifi" in codecs and "dwt" in codecs  # no model -> dwt is the normal codec
-    assert any(r["backfilled"] for r in eng.records)
+    assert any("backfilled_prd" in r for r in eng.records)
     sz = [r["prd"] for r in eng.records if "seizure" in r["truth"] and r["codec"] == "hifi"]
     low = [r["prd"] for r in eng.records if r["codec"] == "dwt"]
     assert np.mean(sz) < np.mean(low)
@@ -72,16 +77,26 @@ def test_with_autoencoder(prep):
     assert eng.summary()["compression_ratio"] > 3
 
 
-def test_lossy_link_and_outage_hold_alert():
-    eng = StreamEngine(LiveSynthSource(seed=2, schedule=[(40.0, 30.0, "seizure")]), None, ChannelConfig(loss_rate=0.1, outages=[(38.0, 20.0)]), cfg=EngineConfig())
-    eng.run(45)
+def test_outage_alert_goes_via_backup_radio():
+    src = lambda: LiveSynthSource(seed=2, schedule=[(60.0, 30.0, "seizure")])
+    ch = ChannelConfig(loss_rate=0.1, outages=[(58.0, 20.0)])
+    eng = StreamEngine(src(), None, ch, cfg=preset("+ack"))  # everything but the backup radio
+    eng.run(50)
+    eng.finish()
     assert any(r["status"] == "lost" for r in eng.records)
     ev = next(e for e in eng.events if e.detector == "seizure")
-    assert ev.t_alert_arrival is None or ev.t_alert_arrival >= 58.0  # held until the link is back
+    assert ev.t_alert_arrival >= 78.0  # held until the link is back
+    assert ev.t_local_alarm is not None  # ... so the wearable alarmed locally
+    assert any(60 < a < 68 for a, b in eng.offline_log)  # receiver noticed the silence
+    eng = StreamEngine(src(), None, ch, cfg=preset("pulselink"))
+    eng.run(50)
+    eng.finish()
+    ev = next(e for e in eng.events if e.detector == "seizure")
+    assert ev.alert_path == "backup" and ev.t_alert_arrival - ev.t_onset_device < 3.0
 
 
 def test_live_controls_change_the_channel():
-    eng = run_tour(frames=5)
+    eng = run_tour(frames=5, finish=False)
     eng.set_channel(loss_rate=0.3, bandwidth_bps=1600.0)
     assert eng.sim.bandwidth_at(eng.t) == 1600.0
     eng.source.inject("seizure")

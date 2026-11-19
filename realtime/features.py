@@ -35,6 +35,9 @@ class Features:
     channel_asymmetry: float  # max rms / min rms
     rhythmicity: float  # spectral peak / mean power in 1-20 Hz
     peak_freq: float  # Hz, dominant frequency in 1-20 Hz
+    mobility: float = 0.0  # Hjorth mobility (mean frequency proxy), mean over channels
+    complexity: float = 0.0  # Hjorth complexity (bandwidth / irregularity)
+    spectral_entropy: float = 0.0  # 0 = one pure rhythm, 1 = flat (white) spectrum
     extra: dict = field(default_factory=dict)
 
     def rel(self, name: str) -> float:
@@ -54,13 +57,16 @@ class Features:
                 self.peak_freq,
                 np.log((self.band["theta"] + 1e-6) / (self.band["alpha"] + 1e-6)),
                 np.log((self.band["beta"] + 1e-6) / (self.band["alpha"] + self.band["theta"] + 1e-6)),
+                self.mobility,
+                self.complexity,
+                self.spectral_entropy,
             ]
         )
 
 
 FEATURE_NAMES = (
     [f"log_{b}" for b in BANDS] + [f"rel_{b}" for b in BANDS]
-    + ["log_total", "log_line_length", "log_max_abs", "log_asymmetry", "rhythmicity", "peak_freq", "log_theta_alpha", "log_engagement"]
+    + ["log_total", "log_line_length", "log_max_abs", "log_asymmetry", "rhythmicity", "peak_freq", "log_theta_alpha", "log_engagement", "hjorth_mobility", "hjorth_complexity", "spectral_entropy"]
 )
 
 
@@ -85,6 +91,16 @@ def compute_features(x: np.ndarray, fs: float) -> Features:
     peak = float(f[sel][np.argmax(ps)]) if ps.size else 0.0
     rms = np.sqrt(np.mean((x - x.mean(-1, keepdims=True)) ** 2, axis=-1))
     mean_abs_diff = np.abs(np.diff(x, axis=-1)).mean(-1)
+    # Hjorth parameters (time domain, a few multiply-adds per sample)
+    d1 = np.diff(x, axis=-1)
+    d2 = np.diff(d1, axis=-1)
+    v0, v1, v2 = x.var(-1) + 1e-12, d1.var(-1) + 1e-12, d2.var(-1) + 1e-12
+    mob = np.sqrt(v1 / v0)
+    comp = np.sqrt(v2 / v1) / mob
+    # spectral entropy over 0.5-40 Hz, normalised to [0, 1]
+    m_se = (f >= 0.5) & (f <= 40.0)
+    pn = pm[m_se] / (pm[m_se].sum() + 1e-12)
+    sent = float(-(pn * np.log(pn + 1e-12)).sum() / np.log(max(pn.size, 2)))
     return Features(
         fs=fs,
         n_channels=c,
@@ -98,6 +114,9 @@ def compute_features(x: np.ndarray, fs: float) -> Features:
         channel_asymmetry=float(rms.max() / (rms.min() + 1e-6)) if c > 1 else 1.0,
         rhythmicity=rhythm,
         peak_freq=peak,
+        mobility=float(mob.mean() * fs / (2 * np.pi)),
+        complexity=float(comp.mean()),
+        spectral_entropy=sent,
     )
 
 

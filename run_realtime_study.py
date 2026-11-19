@@ -43,7 +43,8 @@ def main():
     p.add_argument("--no-chbmit", action="store_true")
     p.add_argument("--runs", type=int, default=12)
     p.add_argument("--minutes", type=float, default=10.0)
-    p.add_argument("--quick", action="store_true", help="small run to check that everything works (~2 min)")
+    p.add_argument("--quick", action="store_true", help="small run to check that everything works (~5 min)")
+    p.add_argument("--no-cnn", action="store_true", help="skip the CNN detector on CHB-MIT (faster)")
     args = p.parse_args()
 
     out = ROOT / "results" / "realtime"
@@ -57,19 +58,24 @@ def main():
     import torch
 
     from compression.autoencoder import load_model
+    from compression.train_streaming import STREAM_MODEL
     from pipeline import DEFAULT_MODEL
     from realtime.experiments import run_all
 
     print(f"PulseLink real-time study  {time.strftime('%Y-%m-%d %H:%M')}")
     print(f"python {platform.python_version()}  numpy {np.__version__}  torch {torch.__version__}  {platform.platform()}")
-    model = None
-    if DEFAULT_MODEL.exists():
-        model = load_model(DEFAULT_MODEL)
-        print(f"autoencoder: {DEFAULT_MODEL} trained on {model.extra.get('source', '?')} (synthetic={model.extra.get('synthetic', '?')})")
+    base = load_model(DEFAULT_MODEL) if DEFAULT_MODEL.exists() else None
+    model = load_model(STREAM_MODEL) if STREAM_MODEL.exists() else None
+    if base is not None:
+        print(f"base autoencoder: {DEFAULT_MODEL.name} trained on {base.extra.get('source', '?')} (synthetic={base.extra.get('synthetic', '?')})")
+    if model is not None:
+        print(f"task-aware streaming autoencoder: {STREAM_MODEL.name}")
     t0 = time.time()
     run_all(
         out,
         model=model,
+        base_model=base,
+        cnn=not args.no_cnn,
         runs=args.runs,
         minutes=args.minutes,
         chbmit=None if args.no_chbmit else args.patient,

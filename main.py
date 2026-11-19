@@ -174,6 +174,17 @@ def _load_model_or_none(path=None):
     return None
 
 
+def _load_realtime_models(path=None):
+    """(system model, base model): the task-aware streaming autoencoder if trained, else the base one."""
+    from compression.autoencoder import load_model
+    from compression.train_streaming import STREAM_MODEL
+
+    base = _load_model_or_none(path)
+    if path is None and STREAM_MODEL.exists():
+        return load_model(STREAM_MODEL), base
+    return base, None
+
+
 def cmd_demo(args):
     import pickle
 
@@ -183,15 +194,17 @@ def cmd_demo(args):
     for path in args.learned or []:
         with open(path, "rb") as f:
             extra.append(pickle.load(f))
-    serve(args.host, args.port, _load_model_or_none(args.model), args.speed, extra, args.edf, args.edf_channels, open_browser=not args.no_browser)
+    serve(args.host, args.port, _load_realtime_models(args.model)[0], args.speed, extra, args.edf, args.edf_channels, open_browser=not args.no_browser, profile=args.profile)
 
 
 def cmd_realtime(args):
     from realtime.experiments import run_all
 
+    model, base = _load_realtime_models(args.model)
     run_all(
         out=Path(args.out) / "realtime" if args.out == str(RESULTS_DIR) else Path(args.out),
-        model=_load_model_or_none(args.model),
+        model=model,
+        base_model=base,
         runs=args.runs,
         minutes=args.minutes,
         chbmit=args.chbmit,
@@ -238,6 +251,7 @@ def main(argv=None):
     d.add_argument("--edf", default=None, help="any EDF file to stream")
     d.add_argument("--edf-channels", nargs="+", default=None)
     d.add_argument("--learned", nargs="+", default=None, help="pickled LearnedDetector(s), e.g. from `main.py realtime --chbmit`")
+    d.add_argument("--profile", default="general", help="use case: general, epilepsy, driver, focus")
     d.add_argument("--no-browser", action="store_true")
     d.add_argument("-v", "--verbose", action="store_true")
 
